@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plan, Group, PlanMemberProgress, TopicWithTasks, UserSubtaskStatus, SubtaskStatus, PlanTask } from '../types';
+import { Plan, Group, PlanMemberProgress, TopicWithTasks, UserSubtaskStatus, SubtaskStatus, PlanTask, User } from '../types';
 import { studyService } from '../services/studyService';
 import {
   BookOpen, Calendar, Layers, PlusCircle,
   Users, ChevronDown, ChevronUp, Lock, CheckCircle2,
-  Circle, Clock, Tag, ExternalLink, Zap, Map, PlayCircle, Sparkles, Loader2
+  Circle, Clock, Tag, ExternalLink, Zap, Map, PlayCircle, Sparkles, Loader2,
+  Eye, UserCheck, Check
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -34,9 +35,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [planDetails, setPlanDetails] = useState<Record<string, PlanDetailState>>({});
   const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
   const [expandedTopicIds, setExpandedTopicIds] = useState<Record<string, boolean>>({});
+  const [groupMembers, setGroupMembers] = useState<User[]>([]);
+  const [selectedMemberId, setSelectedMemberId] = useState<string>(currentUserId || '');
   const [loading, setLoading] = useState(true);
 
   const isInitialLoad = React.useRef(true);
+
+  // Sync selectedMemberId if currentUserId changes
+  useEffect(() => {
+    if (currentUserId && (!selectedMemberId || selectedMemberId === '')) {
+      setSelectedMemberId(currentUserId);
+    }
+  }, [currentUserId, selectedMemberId]);
 
   const loadPlanData = useCallback(async (showLoading = false) => {
     if (!activeGroup || plans.length === 0) {
@@ -45,48 +55,54 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
     if (showLoading) setLoading(true);
 
-    const details: Record<string, PlanDetailState> = {};
-    for (const plan of plans) {
-      try {
-        const [members, topicsWithTasks, userStatuses] = await Promise.all([
+    try {
+      const members = await studyService.getGroupMembers(activeGroup.id);
+      setGroupMembers(members);
+
+      const targetUserId = selectedMemberId || currentUserId || '';
+      const details: Record<string, PlanDetailState> = {};
+
+      for (const plan of plans) {
+        const [planMembers, topicsWithTasks, userStatuses] = await Promise.all([
           studyService.getPlanMembersProgress(plan.id, activeGroup.id),
           studyService.getTopicsWithTasks(plan.id),
-          currentUserId ? studyService.getUserSubtaskStatuses(plan.id, currentUserId) : Promise.resolve({})
+          targetUserId ? studyService.getUserSubtaskStatuses(plan.id, targetUserId) : Promise.resolve({})
         ]);
 
         const totalTasks = topicsWithTasks.reduce((sum, tw) => sum + tw.tasks.length, 0);
 
         details[plan.id] = {
           plan,
-          members,
+          members: planMembers,
           topicsWithTasks,
           userStatuses,
           totalTasks
         };
-      } catch (err) {
-        console.warn('Error loading plan detail:', err);
       }
-    }
 
-    setPlanDetails(details);
-    if (plans.length > 0 && !expandedPlanId) {
-      setExpandedPlanId(plans[0].id);
-      const firstPlanTopics = details[plans[0].id]?.topicsWithTasks;
-      if (firstPlanTopics && firstPlanTopics.length > 0) {
-        setExpandedTopicIds(prev => ({ ...prev, [firstPlanTopics[0].topic.id]: true }));
+      setPlanDetails(details);
+      if (plans.length > 0 && !expandedPlanId) {
+        setExpandedPlanId(plans[0].id);
+        const firstPlanTopics = details[plans[0].id]?.topicsWithTasks;
+        if (firstPlanTopics && firstPlanTopics.length > 0) {
+          setExpandedTopicIds(prev => ({ ...prev, [firstPlanTopics[0].topic.id]: true }));
+        }
       }
+    } catch (err) {
+      console.warn('Error loading plan detail:', err);
+    } finally {
+      if (showLoading) setLoading(false);
     }
-    if (showLoading) setLoading(false);
-  }, [activeGroup, plans, currentUserId, expandedPlanId]);
+  }, [activeGroup, plans, currentUserId, selectedMemberId, expandedPlanId]);
 
   useEffect(() => {
     loadPlanData(isInitialLoad.current);
     isInitialLoad.current = false;
   }, [loadPlanData]);
 
-  // Status toggle handler - 0ms instant optimistic update
+  // Status toggle handler - only allowed when viewing own progress
   const handleToggleSubtask = async (task: PlanTask, currentStatus?: SubtaskStatus) => {
-    if (!currentUserId) return;
+    if (!currentUserId || selectedMemberId !== currentUserId) return;
     
     // Cycle: not_started -> in_progress -> completed -> not_started
     const nextStatus: SubtaskStatus =
@@ -139,6 +155,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setExpandedTopicIds(prev => ({ ...prev, [topicId]: !prev[topicId] }));
   };
 
+  const isViewingSelf = selectedMemberId === currentUserId;
+  const viewedMember = groupMembers.find(m => m.id === selectedMemberId);
+
   return (
     <div className="space-y-7 max-w-4xl mx-auto">
       {/* Header */}
@@ -153,7 +172,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </h2>
           <p className="text-slate-400 text-xs sm:text-sm mt-1">
             Sequential chapters for <span className="text-violet-300 font-semibold">{activeGroup.name}</span>.
-            Track your individual subtask completion across each topic.
+            Check off your subtasks or switch to inspect your teammates' exact progress.
           </p>
         </div>
         <button
@@ -164,6 +183,64 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <span>New Study Plan</span>
         </button>
       </div>
+
+      {/* ─── Teammate Progress Inspector Bar ─── */}
+      <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 shadow-lg">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider shrink-0">
+          <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400" />
+          <span>Inspect Member:</span>
+        </div>
+
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 sm:pb-0 max-w-full">
+          {groupMembers.map(member => {
+            const isMe = member.id === currentUserId;
+            const isSelected = selectedMemberId === member.id;
+            return (
+              <button
+                key={member.id}
+                onClick={() => setSelectedMemberId(member.id)}
+                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                  isSelected
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md shadow-violet-600/30 ring-1 ring-white/20'
+                    : 'bg-[#121626] border border-white/[0.06] text-slate-300 hover:border-violet-500/40 hover:text-white'
+                }`}
+              >
+                <img
+                  src={member.avatar}
+                  alt={member.name}
+                  className="w-4 h-4 rounded-full object-cover"
+                />
+                <span className="truncate max-w-[90px] sm:max-w-none">{member.name}{isMe ? ' (You)' : ''}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Notice Banner when viewing a Teammate */}
+      {!isViewingSelf && viewedMember && (
+        <div className="p-4 rounded-2xl bg-cyan-950/40 border border-cyan-700/50 flex items-center justify-between gap-4 text-xs">
+          <div className="flex items-center gap-3">
+            <img src={viewedMember.avatar} alt={viewedMember.name} className="w-8 h-8 rounded-full border border-cyan-500/40" />
+            <div>
+              <p className="font-bold text-white text-sm">
+                Viewing <span className="text-cyan-300">{viewedMember.name}'s</span> Progress
+              </p>
+              <p className="text-slate-400 text-xs">
+                You are viewing which topics & subtasks {viewedMember.name} has completed. Subtasks are read-only.
+              </p>
+            </div>
+          </div>
+          {currentUserId && (
+            <button
+              onClick={() => setSelectedMemberId(currentUserId)}
+              className="bg-cyan-900/60 hover:bg-cyan-900/90 text-cyan-200 font-bold px-3.5 py-1.5 rounded-xl border border-cyan-600/50 transition shrink-0"
+            >
+              Switch to You
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Invite code banner */}
       <div className="flex items-center justify-between px-5 py-3.5 rounded-2xl bg-gradient-to-r from-[#121626] to-[#0E111C] border border-white/[0.08] text-xs shadow-md">
@@ -207,7 +284,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="space-y-6">
           {plans.map(plan => {
             const detail = planDetails[plan.id];
-            const myMemberProgress = detail?.members?.find(m => m.user.id === currentUserId);
+            const targetMemberProgress = detail?.members?.find(m => m.user.id === selectedMemberId);
             const isPlanExpanded = expandedPlanId === plan.id;
             const totalTasks = detail?.totalTasks || 0;
             const userStatuses = detail?.userStatuses || {};
@@ -247,17 +324,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <p className="text-xs sm:text-sm text-slate-400 line-clamp-1 leading-relaxed">{plan.description}</p>
                     )}
 
-                    {/* My Progress Bar */}
-                    {myMemberProgress && (
+                    {/* Progress Bar for selected member */}
+                    {targetMemberProgress && (
                       <div className="flex items-center gap-3 pt-2 max-w-lg">
                         <div className="flex-1 bg-[#101424] h-2.5 rounded-full overflow-hidden border border-white/[0.08]">
                           <div
                             className="bg-gradient-to-r from-violet-500 via-indigo-500 to-emerald-400 h-full rounded-full transition-all duration-700"
-                            style={{ width: `${myMemberProgress.percentage}%` }}
+                            style={{ width: `${targetMemberProgress.percentage}%` }}
                           />
                         </div>
                         <span className="text-xs font-bold text-violet-300 shrink-0 font-mono">
-                          Your Progress: {myMemberProgress.completed}/{myMemberProgress.total} ({myMemberProgress.percentage}%)
+                          {isViewingSelf ? 'Your Progress' : `${viewedMember?.name || 'Member'}'s Progress`}: {targetMemberProgress.completed}/{targetMemberProgress.total} ({targetMemberProgress.percentage}%)
                         </span>
                       </div>
                     )}
@@ -271,8 +348,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           key={m.user.id}
                           src={m.user.avatar}
                           alt={m.user.name}
-                          className="w-8 h-8 rounded-full border-2 border-[#0B0D14] object-cover ring-1 ring-violet-500/30"
-                          title={`${m.user.name}: ${m.percentage}% completed`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedMemberId(m.user.id);
+                          }}
+                          className={`w-8 h-8 rounded-full border-2 border-[#0B0D14] object-cover ring-1 transition cursor-pointer hover:scale-110 ${
+                            selectedMemberId === m.user.id ? 'ring-cyan-400 ring-2' : 'ring-violet-500/30'
+                          }`}
+                          title={`Click to inspect ${m.user.name}: ${m.percentage}% completed`}
                         />
                       ))}
                     </div>
@@ -288,21 +371,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     
                     {/* Team Members Progress Grid */}
                     <div className="space-y-3">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                        <Users className="w-3.5 h-3.5 text-violet-400" />
-                        Team Progress Breakdown
-                      </h4>
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-violet-400" />
+                          Squad Progress Leaderboard & Inspector
+                        </h4>
+                        <span className="text-[11px] text-slate-500">
+                          Click any member card to inspect their checklist below
+                        </span>
+                      </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                         {detail?.members?.map(m => {
                           const isMe = m.user.id === currentUserId;
+                          const isSelected = selectedMemberId === m.user.id;
                           return (
                             <div
                               key={m.user.id}
-                              className={`p-3.5 rounded-2xl border flex items-center gap-3 transition ${
-                                isMe
-                                  ? 'bg-violet-950/40 border-violet-700/60 shadow-lg shadow-violet-950/30'
-                                  : 'bg-[#121626]/80 border-white/[0.06]'
+                              onClick={() => setSelectedMemberId(m.user.id)}
+                              className={`p-3.5 rounded-2xl border flex items-center gap-3 transition cursor-pointer ${
+                                isSelected
+                                  ? 'bg-violet-950/60 border-violet-500 shadow-lg shadow-violet-950/40 ring-1 ring-violet-400/50'
+                                  : isMe
+                                    ? 'bg-violet-950/20 border-violet-800/40 hover:border-violet-600'
+                                    : 'bg-[#121626]/80 border-white/[0.06] hover:border-white/[0.15]'
                               }`}
                             >
                               <img
@@ -312,7 +404,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between text-xs mb-1.5">
-                                  <span className={`font-bold truncate ${isMe ? 'text-violet-300' : 'text-slate-200'}`}>
+                                  <span className={`font-bold truncate ${isSelected ? 'text-white' : isMe ? 'text-violet-300' : 'text-slate-200'}`}>
                                     {m.user.name}{isMe ? ' (You)' : ''}
                                   </span>
                                   <span className="font-mono font-bold text-slate-400 shrink-0">
@@ -322,7 +414,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 <div className="w-full bg-[#0B0D14] h-2 rounded-full overflow-hidden border border-white/[0.04]">
                                   <div
                                     className={`h-full rounded-full transition-all duration-500 ${
-                                      isMe ? 'bg-gradient-to-r from-violet-500 to-indigo-400' : 'bg-slate-600'
+                                      isSelected
+                                        ? 'bg-gradient-to-r from-cyan-400 to-violet-500'
+                                        : isMe
+                                          ? 'bg-gradient-to-r from-violet-500 to-indigo-400'
+                                          : 'bg-slate-600'
                                     }`}
                                     style={{ width: `${m.percentage}%` }}
                                   />
@@ -339,10 +435,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <div className="flex items-center justify-between">
                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                           <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                          Curriculum & Sequential Topics
+                          Curriculum Checklist ({isViewingSelf ? 'Your View' : `${viewedMember?.name || 'Member'}'s View`})
                         </h4>
                         <span className="text-[11px] text-slate-500">
-                          Click circle to cycle status (⚪ Not Started $\rightarrow$ ⏳ In Progress $\rightarrow$ ✅ Done)
+                          {isViewingSelf ? 'Click circle to update your completion status' : 'Read-only checklist for teammate'}
                         </span>
                       </div>
 
@@ -424,12 +520,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                               : 'bg-[#121626]/50 border-white/[0.05] hover:border-violet-500/40'
                                         }`}
                                       >
-                                        {/* Status Toggle Button */}
+                                        {/* Status Toggle Button / Readonly Icon */}
                                         <button
                                           type="button"
+                                          disabled={!isViewingSelf}
                                           onClick={() => handleToggleSubtask(task, userStatus)}
-                                          className="mt-0.5 shrink-0 transition transform hover:scale-110"
-                                          title={`Current status: ${userStatus}. Click to cycle.`}
+                                          className={`mt-0.5 shrink-0 transition ${isViewingSelf ? 'transform hover:scale-110 cursor-pointer' : 'cursor-default'}`}
+                                          title={isViewingSelf ? `Status: ${userStatus}. Click to cycle.` : `Status for ${viewedMember?.name}: ${userStatus}`}
                                         >
                                           {isDone ? (
                                             <CheckCircle2 className="w-5 h-5 text-emerald-400 fill-emerald-500/20" />
@@ -455,7 +552,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                                   ? 'bg-amber-950/80 border-amber-700 text-amber-300'
                                                   : 'bg-white/[0.04] border-white/[0.08] text-slate-500'
                                             }`}>
-                                              {isDone ? 'Completed' : isInProgress ? 'In Progress' : 'Not Started'}
+                                              {isDone
+                                                ? (isViewingSelf ? 'Completed' : `Done by ${viewedMember?.name || 'Member'}`)
+                                                : isInProgress
+                                                  ? 'In Progress'
+                                                  : 'Not Started'}
                                             </span>
 
                                             {task.priority === 'high' && (

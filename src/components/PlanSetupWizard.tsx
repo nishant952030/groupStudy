@@ -311,16 +311,16 @@ export const PlanSetupWizard: React.FC<PlanSetupWizardProps> = ({ isOpen, onClos
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-xl overflow-y-auto animate-fadeIn">
-      <div className="glass-panel w-full max-w-2xl rounded-3xl border border-white/[0.12] shadow-2xl my-4 bg-[#0E111C]/95">
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-2.5 sm:p-6 bg-black/85 backdrop-blur-xl overflow-y-auto animate-fadeIn">
+      <div className="glass-panel w-full max-w-2xl rounded-2xl sm:rounded-3xl border border-white/[0.12] shadow-2xl my-2 sm:my-4 bg-[#0E111C]/95">
 
         {/* Header */}
-        <div className="flex items-start justify-between p-6 sm:p-7 border-b border-white/[0.08]">
+        <div className="flex items-start justify-between p-4 sm:p-7 border-b border-white/[0.08]">
           <div>
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-violet-400 mb-1.5">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-violet-400 mb-1">
               <Sparkles className="w-3.5 h-3.5" /> Step {step} of 3
             </div>
-            <h2 className="text-xl sm:text-2xl font-display font-bold text-white">
+            <h2 className="text-lg sm:text-2xl font-display font-bold text-white">
               {step === 1 && 'Plan Overview'}
               {step === 2 && 'Build Your Study Curriculum'}
               {step === 3 && 'Review & Launch Roadmap'}
@@ -331,13 +331,13 @@ export const PlanSetupWizard: React.FC<PlanSetupWizardProps> = ({ isOpen, onClos
               {step === 3 && `Ready to publish: ${validTopics.length} topics and ${totalSubtasks} subtasks.`}
             </p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition ml-4 shrink-0">
+          <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition ml-2 shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Progress bar */}
-        <div className="flex gap-2 px-6 sm:px-7 pt-4">
+        <div className="flex gap-2 px-4 sm:px-7 pt-3 sm:pt-4">
           {[1, 2, 3].map(s => (
             <div key={s} className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${step >= s ? 'bg-gradient-to-r from-violet-600 to-indigo-500' : 'bg-white/[0.08]'}`} />
           ))}

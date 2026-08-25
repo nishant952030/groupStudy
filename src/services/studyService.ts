@@ -434,19 +434,11 @@ export const studyService = {
     }
   },
 
-  /**
-   * Toggle subtask status for a user.
-   * Cycle: not_started → in_progress → completed → not_started
-   */
-  async cycleSubtaskStatus(
+  async setSubtaskStatus(
     task: PlanTask,
     userId: string,
-    currentStatus: SubtaskStatus | undefined
+    newStatus: SubtaskStatus
   ): Promise<UserSubtaskStatus> {
-    const nextStatus: SubtaskStatus =
-      !currentStatus || currentStatus === 'not_started' ? 'in_progress' :
-      currentStatus === 'in_progress' ? 'completed' : 'not_started';
-
     const now = new Date().toISOString();
     const statusObj: UserSubtaskStatus = {
       id: `${task.id}_${userId}`,
@@ -455,9 +447,9 @@ export const studyService = {
       plan_id: task.plan_id,
       group_id: task.group_id,
       user_id: userId,
-      status: nextStatus,
-      started_at: nextStatus === 'in_progress' ? now : (nextStatus === 'completed' ? now : null),
-      completed_at: nextStatus === 'completed' ? now : null,
+      status: newStatus,
+      started_at: newStatus === 'in_progress' ? now : (newStatus === 'completed' ? now : null),
+      completed_at: newStatus === 'completed' ? now : null,
     };
 
     if (this.isDemo || !db) {
@@ -478,6 +470,20 @@ export const studyService = {
       notify();
       return statusObj;
     }
+  },
+
+  /**
+   * Cycle status: not_started -> in_progress -> completed -> not_started
+   */
+  async cycleSubtaskStatus(
+    task: PlanTask,
+    userId: string,
+    currentStatus: SubtaskStatus | undefined
+  ): Promise<UserSubtaskStatus> {
+    const nextStatus: SubtaskStatus =
+      !currentStatus || currentStatus === 'not_started' ? 'in_progress' :
+      currentStatus === 'in_progress' ? 'completed' : 'not_started';
+    return this.setSubtaskStatus(task, userId, nextStatus);
   },
 
   // ── Plan Progress ────────────────────────────────────────────────────────
@@ -537,5 +543,73 @@ export const studyService = {
       }
       return { user: member, completedCount: completed, totalCount: total, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 };
     }));
+  },
+
+  // ── Member Detailed Progress Breakdown ───────────────────────────────────
+  async getMemberDetailedProgress(groupId: string, userId: string): Promise<{
+    plans: {
+      plan: Plan;
+      total: number;
+      completed: number;
+      percentage: number;
+      topics: {
+        topic: PlanTopic;
+        total: number;
+        completed: number;
+        percentage: number;
+        completedTasks: PlanTask[];
+        inProgressTasks: PlanTask[];
+      }[];
+    }[];
+    todayCompletedTasks: { task: PlanTask; completedAt?: string }[];
+  }> {
+    const plans = await this.getGroupPlans(groupId);
+    const plansBreakdown = [];
+    const todayCompleted: { task: PlanTask; completedAt?: string }[] = [];
+
+    for (const plan of plans) {
+      const topicsWithTasks = await this.getTopicsWithTasks(plan.id);
+      const statusMap = await this.getUserSubtaskStatuses(plan.id, userId);
+
+      let planTotal = 0;
+      let planCompleted = 0;
+
+      const topics = topicsWithTasks.map(({ topic, tasks }) => {
+        const completedTasks = tasks.filter(t => statusMap[t.id]?.status === 'completed');
+        const inProgressTasks = tasks.filter(t => statusMap[t.id]?.status === 'in_progress');
+
+        completedTasks.forEach(t => {
+          const completedAt = statusMap[t.id]?.completed_at;
+          if (completedAt && completedAt.startsWith(todayStr)) {
+            todayCompleted.push({ task: t, completedAt });
+          }
+        });
+
+        planTotal += tasks.length;
+        planCompleted += completedTasks.length;
+
+        return {
+          topic,
+          total: tasks.length,
+          completed: completedTasks.length,
+          percentage: tasks.length > 0 ? Math.round((completedTasks.length / tasks.length) * 100) : 0,
+          completedTasks,
+          inProgressTasks
+        };
+      });
+
+      plansBreakdown.push({
+        plan,
+        total: planTotal,
+        completed: planCompleted,
+        percentage: planTotal > 0 ? Math.round((planCompleted / planTotal) * 100) : 0,
+        topics
+      });
+    }
+
+    return {
+      plans: plansBreakdown,
+      todayCompletedTasks: todayCompleted
+    };
   },
 };

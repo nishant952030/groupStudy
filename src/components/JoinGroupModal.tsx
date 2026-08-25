@@ -62,12 +62,12 @@ export const JoinGroupModal: React.FC<JoinGroupModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fadeIn">
-      <div className="glass-panel w-full max-w-md rounded-3xl border border-white/[0.12] p-6 sm:p-8 shadow-2xl relative bg-[#0E111C]/95">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-xl animate-fadeIn">
+      <div className="glass-panel w-full max-w-md rounded-2xl sm:rounded-3xl border border-white/[0.12] p-5 sm:p-8 shadow-2xl relative bg-[#0E111C]/95">
         
         <button
           onClick={onClose}
-          className="absolute top-6 right-6 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition"
+          className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition"
         >
           <X className="w-5 h-5" />
         </button>
