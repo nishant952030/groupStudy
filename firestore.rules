@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Groups Collection
+    match /groups/{groupId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Plans Collection
+    match /plans/{planId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Plan Topics Collection
+    match /plan_topics/{topicId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Plan Tasks Collection
+    match /plan_tasks/{taskId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // User Subtask Statuses Collection (per-user progress)
+    match /user_subtask_statuses/{statusId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Private Task Notes Collection
+    match /task_notes/{noteId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Daily Logs Collection (legacy)
+    match /daily_logs/{logId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Fallback rule for development/testing: Allow all reads and writes for authenticated users
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

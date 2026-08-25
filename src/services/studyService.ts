@@ -1,929 +1,541 @@
-import { 
-  collection, doc, getDoc, getDocs, setDoc, updateDoc, 
-  query, where, onSnapshot, serverTimestamp, deleteDoc 
+import {
+  collection, doc, getDoc, getDocs, setDoc, updateDoc,
+  query, where, deleteDoc
 } from 'firebase/firestore';
 import { db, isRealFirebaseConfigured } from './firebase';
-import { User, Group, Plan, PlanTask, DailyLog, DailyPullTask, MemberProgress } from '../types';
+import {
+  User, Group, Plan, PlanTopic, PlanTask,
+  UserSubtaskStatus, SubtaskStatus, TopicWithTasks,
+  PlanMemberProgress, MemberProgress
+} from '../types';
 
-// Helper: Get YYYY-MM-DD date string
+// ─── Utility Helpers ────────────────────────────────────────────────────────
+
 export function getTodayDateString(offsetDays: number = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
   return d.toISOString().split('T')[0];
 }
 
-// Generate 6-character alphanumeric invite code
 export function generateInviteCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
   return code;
 }
 
-// Demo Data Storage for seamless offline/standalone testing
+const todayStr = getTodayDateString(0);
+
+// ─── Demo Data ──────────────────────────────────────────────────────────────
+
 const DEMO_USERS: Record<string, User> = {
-  'user-1': {
-    id: 'user-1',
-    name: 'Alex Chen',
-    email: 'alex@example.com',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    createdAt: new Date().toISOString()
-  },
-  'user-2': {
-    id: 'user-2',
-    name: 'Sarah Miller',
-    email: 'sarah@example.com',
-    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-    createdAt: new Date().toISOString()
-  },
-  'user-3': {
-    id: 'user-3',
-    name: 'Marcus Vance',
-    email: 'marcus@example.com',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    createdAt: new Date().toISOString()
-  }
+  'user-1': { id: 'user-1', name: 'Alex Chen', email: 'alex@example.com', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80', createdAt: new Date().toISOString() },
+  'user-2': { id: 'user-2', name: 'Sarah Miller', email: 'sarah@example.com', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80', createdAt: new Date().toISOString() },
+  'user-3': { id: 'user-3', name: 'Marcus Vance', email: 'marcus@example.com', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80', createdAt: new Date().toISOString() },
 };
 
-const yesterdayStr = getTodayDateString(-1);
-const todayStr = getTodayDateString(0);
-const tomorrowStr = getTodayDateString(1);
-
 let demoGroups: Group[] = [
-  {
-    id: 'group-1',
-    name: 'Quantum Physics Masters',
-    invite_code: 'PHYS66',
-    members: ['user-1', 'user-2', 'user-3'],
-    createdBy: 'user-1',
-    createdAt: new Date().toISOString()
-  }
+  { id: 'group-1', name: 'SDE Interview Prep Squad', invite_code: 'SDE001', members: ['user-1', 'user-2', 'user-3'], createdBy: 'user-1', createdAt: new Date().toISOString() }
 ];
 
 let demoPlans: Plan[] = [
   {
-    id: 'plan-1',
+    id: 'plan-dsa',
     group_id: 'group-1',
-    title: 'Physics Final Exam Prep',
-    type: 'fixed',
+    title: 'DSA Mastery for Job Switch',
+    description: 'Complete DSA preparation covering all major patterns needed for FAANG/top product company interviews.',
+    type: 'roadmap',
+    start_date: todayStr,
+    end_date: getTodayDateString(60),
     createdBy: 'user-1',
     createdAt: new Date().toISOString()
   },
   {
-    id: 'plan-2',
+    id: 'plan-sd',
     group_id: 'group-1',
-    title: 'LeetCode & Algorithms Sprint',
-    type: 'rolling',
-    deadline: getTodayDateString(7),
+    title: 'System Design Crash Course',
+    description: '4-week crash course on system design fundamentals, from basics to designing real systems.',
+    type: 'sprint',
+    start_date: todayStr,
+    end_date: getTodayDateString(28),
     createdBy: 'user-2',
     createdAt: new Date().toISOString()
-  },
-  {
-    id: 'plan-3',
-    group_id: 'group-1',
-    title: 'Week 1: System Design Foundations',
-    type: 'fixed',
-    deadline: getTodayDateString(6),
-    createdBy: 'user-3',
-    createdAt: new Date().toISOString()
   }
+];
+
+let demoTopics: PlanTopic[] = [
+  // DSA Plan Topics
+  { id: 't-dsa-1', plan_id: 'plan-dsa', group_id: 'group-1', title: 'Arrays & Hashing', description: 'Foundation of DSA — master hash maps, sets, and array manipulation patterns.', estimated_days: 4, order: 1 },
+  { id: 't-dsa-2', plan_id: 'plan-dsa', group_id: 'group-1', title: 'Two Pointers', description: 'Solve O(n) problems that would otherwise be O(n²) using the two-pointer technique.', estimated_days: 3, order: 2 },
+  { id: 't-dsa-3', plan_id: 'plan-dsa', group_id: 'group-1', title: 'Sliding Window', description: 'Subarray/substring problems using a dynamic window over the data.', estimated_days: 3, order: 3 },
+  { id: 't-dsa-4', plan_id: 'plan-dsa', group_id: 'group-1', title: 'Binary Search', description: 'Beyond sorted arrays — apply binary search on answer ranges and 2D matrices.', estimated_days: 3, order: 4 },
+  { id: 't-dsa-5', plan_id: 'plan-dsa', group_id: 'group-1', title: 'Linked Lists', description: 'Pointer manipulation, reversal, cycle detection, and merge patterns.', estimated_days: 4, order: 5 },
+  { id: 't-dsa-6', plan_id: 'plan-dsa', group_id: 'group-1', title: 'Trees & BST', description: 'DFS, BFS, level-order, validate BST, LCA, and tree DP.', estimated_days: 5, order: 6 },
+  { id: 't-dsa-7', plan_id: 'plan-dsa', group_id: 'group-1', title: 'Dynamic Programming', description: 'The hardest pattern — 1D, 2D DP, knapsack, and interval DP.', estimated_days: 7, order: 7 },
+  // System Design Plan Topics
+  { id: 't-sd-1', plan_id: 'plan-sd', group_id: 'group-1', title: 'Fundamentals', description: 'Scalability, availability, CAP theorem, and the language of system design.', estimated_days: 3, order: 1 },
+  { id: 't-sd-2', plan_id: 'plan-sd', group_id: 'group-1', title: 'Databases & Storage', description: 'SQL vs NoSQL, indexing, sharding, and when to use each.', estimated_days: 4, order: 2 },
+  { id: 't-sd-3', plan_id: 'plan-sd', group_id: 'group-1', title: 'Caching & CDN', description: 'Redis, cache invalidation strategies, CDN usage.', estimated_days: 3, order: 3 },
+  { id: 't-sd-4', plan_id: 'plan-sd', group_id: 'group-1', title: 'Design Real Systems', description: 'URL Shortener, Instagram, WhatsApp, YouTube — full end-to-end designs.', estimated_days: 7, order: 4 },
 ];
 
 let demoTasks: PlanTask[] = [
-  // ── plan-1: Physics Final Exam Prep (Fixed) ──────────────────────────────
-  {
-    id: 'task-1',
-    plan_id: 'plan-1',
-    group_id: 'group-1',
-    title: 'Review Electromagnetism Formulas & Maxwell Equations',
-    scheduled_date: yesterdayStr,
-    status: 'pending', // OVERDUE from yesterday
-    order: 1
-  },
-  {
-    id: 'task-2',
-    plan_id: 'plan-1',
-    group_id: 'group-1',
-    title: 'Complete Optics Problem Set (Ch 24: #1-15)',
-    scheduled_date: todayStr,
-    status: 'completed',
-    completed_by: 'user-1',
-    completed_at: new Date().toISOString(),
-    order: 2
-  },
-  {
-    id: 'task-3',
-    plan_id: 'plan-1',
-    group_id: 'group-1',
-    title: 'Watch Quantum Mechanics Wave Functions Lecture 4',
-    scheduled_date: todayStr,
-    status: 'pending',
-    order: 3
-  },
-  {
-    id: 'task-4',
-    plan_id: 'plan-1',
-    group_id: 'group-1',
-    title: 'Thermodynamics & Entropy Practice Exam',
-    scheduled_date: tomorrowStr,
-    status: 'pending',
-    order: 4
-  },
-
-  // ── plan-2: LeetCode & Algorithms Sprint (Rolling) ───────────────────────
-  {
-    id: 'task-5',
-    plan_id: 'plan-2',
-    group_id: 'group-1',
-    title: 'Solve Two Sum & 3Sum (Arrays & Hash Maps)',
-    status: 'completed',
-    completed_by: 'user-1',
-    completed_at: new Date().toISOString(),
-    order: 1
-  },
-  {
-    id: 'task-6',
-    plan_id: 'plan-2',
-    group_id: 'group-1',
-    title: 'Implement Binary Search Tree Traversal (Inorder/Preorder)',
-    status: 'pending',
-    order: 2
-  },
-  {
-    id: 'task-7',
-    plan_id: 'plan-2',
-    group_id: 'group-1',
-    title: 'Solve Reversing a Linked List & Detect Cycle',
-    status: 'pending',
-    order: 3
-  },
-  {
-    id: 'task-8',
-    plan_id: 'plan-2',
-    group_id: 'group-1',
-    title: 'Master Dijkstra Shortest Path Algorithm',
-    status: 'pending',
-    order: 4
-  },
-  {
-    id: 'task-9',
-    plan_id: 'plan-2',
-    group_id: 'group-1',
-    title: 'Dynamic Programming: Coin Change & Knapsack Problem',
-    status: 'pending',
-    order: 5
-  },
-
-  // ── plan-3: Week 1 System Design Foundations (Fixed) ─────────────────────
-  // Day 1 — What is System Design? (Today)
-  {
-    id: 'sd-d1-1', plan_id: 'plan-3', group_id: 'group-1', order: 1,
-    title: 'Understand what system design means',
-    scheduled_date: todayStr, status: 'pending'
-  },
-  {
-    id: 'sd-d1-2', plan_id: 'plan-3', group_id: 'group-1', order: 2,
-    title: 'Learn Functional vs Non-Functional Requirements',
-    scheduled_date: todayStr, status: 'pending'
-  },
-  {
-    id: 'sd-d1-3', plan_id: 'plan-3', group_id: 'group-1', order: 3,
-    title: 'Understand scalability, availability, reliability, latency, throughput',
-    scheduled_date: todayStr, status: 'pending'
-  },
-  {
-    id: 'sd-d1-4', plan_id: 'plan-3', group_id: 'group-1', order: 4,
-    title: 'Learn vertical vs horizontal scaling',
-    scheduled_date: todayStr, status: 'pending'
-  },
-  {
-    id: 'sd-d1-5', plan_id: 'plan-3', group_id: 'group-1', order: 5,
-    title: 'Understand the difference between architecture and implementation',
-    scheduled_date: todayStr, status: 'pending'
-  },
-  {
-    id: 'sd-d1-6', plan_id: 'plan-3', group_id: 'group-1', order: 6,
-    title: 'Design a simple URL Shortener at a high level (Practice: explain in 5 min)',
-    scheduled_date: todayStr, status: 'pending'
-  },
-
-  // Day 2 — Client–Server Architecture (Tomorrow)
-  {
-    id: 'sd-d2-1', plan_id: 'plan-3', group_id: 'group-1', order: 7,
-    title: 'Understand clients, servers and APIs',
-    scheduled_date: getTodayDateString(1), status: 'pending'
-  },
-  {
-    id: 'sd-d2-2', plan_id: 'plan-3', group_id: 'group-1', order: 8,
-    title: 'Learn request/response lifecycle',
-    scheduled_date: getTodayDateString(1), status: 'pending'
-  },
-  {
-    id: 'sd-d2-3', plan_id: 'plan-3', group_id: 'group-1', order: 9,
-    title: 'Understand HTTP and HTTPS',
-    scheduled_date: getTodayDateString(1), status: 'pending'
-  },
-  {
-    id: 'sd-d2-4', plan_id: 'plan-3', group_id: 'group-1', order: 10,
-    title: 'Learn REST API fundamentals',
-    scheduled_date: getTodayDateString(1), status: 'pending'
-  },
-  {
-    id: 'sd-d2-5', plan_id: 'plan-3', group_id: 'group-1', order: 11,
-    title: 'Understand HTTP methods and status codes',
-    scheduled_date: getTodayDateString(1), status: 'pending'
-  },
-  {
-    id: 'sd-d2-6', plan_id: 'plan-3', group_id: 'group-1', order: 12,
-    title: 'Learn stateless vs stateful servers',
-    scheduled_date: getTodayDateString(1), status: 'pending'
-  },
-  {
-    id: 'sd-d2-7', plan_id: 'plan-3', group_id: 'group-1', order: 13,
-    title: 'Design a simple backend for a Todo application',
-    scheduled_date: getTodayDateString(1), status: 'pending'
-  },
-
-  // Day 3 — Databases (Day +2)
-  {
-    id: 'sd-d3-1', plan_id: 'plan-3', group_id: 'group-1', order: 14,
-    title: 'Understand SQL vs NoSQL',
-    scheduled_date: getTodayDateString(2), status: 'pending'
-  },
-  {
-    id: 'sd-d3-2', plan_id: 'plan-3', group_id: 'group-1', order: 15,
-    title: 'Learn tables, rows, indexes and relationships',
-    scheduled_date: getTodayDateString(2), status: 'pending'
-  },
-  {
-    id: 'sd-d3-3', plan_id: 'plan-3', group_id: 'group-1', order: 16,
-    title: 'Understand primary keys and foreign keys',
-    scheduled_date: getTodayDateString(2), status: 'pending'
-  },
-  {
-    id: 'sd-d3-4', plan_id: 'plan-3', group_id: 'group-1', order: 17,
-    title: 'Learn database normalization',
-    scheduled_date: getTodayDateString(2), status: 'pending'
-  },
-  {
-    id: 'sd-d3-5', plan_id: 'plan-3', group_id: 'group-1', order: 18,
-    title: 'Understand database indexing',
-    scheduled_date: getTodayDateString(2), status: 'pending'
-  },
-  {
-    id: 'sd-d3-6', plan_id: 'plan-3', group_id: 'group-1', order: 19,
-    title: 'Learn when to choose SQL vs NoSQL',
-    scheduled_date: getTodayDateString(2), status: 'pending'
-  },
-  {
-    id: 'sd-d3-7', plan_id: 'plan-3', group_id: 'group-1', order: 20,
-    title: 'Understand basic database scaling (Practice: design e-commerce DB)',
-    scheduled_date: getTodayDateString(2), status: 'pending'
-  },
-
-  // Day 4 — Caching (Day +3)
-  {
-    id: 'sd-d4-1', plan_id: 'plan-3', group_id: 'group-1', order: 21,
-    title: 'Understand why caching is needed',
-    scheduled_date: getTodayDateString(3), status: 'pending'
-  },
-  {
-    id: 'sd-d4-2', plan_id: 'plan-3', group_id: 'group-1', order: 22,
-    title: 'Learn cache-aside pattern',
-    scheduled_date: getTodayDateString(3), status: 'pending'
-  },
-  {
-    id: 'sd-d4-3', plan_id: 'plan-3', group_id: 'group-1', order: 23,
-    title: 'Understand Redis at a high level',
-    scheduled_date: getTodayDateString(3), status: 'pending'
-  },
-  {
-    id: 'sd-d4-4', plan_id: 'plan-3', group_id: 'group-1', order: 24,
-    title: 'Learn cache hit vs cache miss',
-    scheduled_date: getTodayDateString(3), status: 'pending'
-  },
-  {
-    id: 'sd-d4-5', plan_id: 'plan-3', group_id: 'group-1', order: 25,
-    title: 'Understand TTL (Time-To-Live)',
-    scheduled_date: getTodayDateString(3), status: 'pending'
-  },
-  {
-    id: 'sd-d4-6', plan_id: 'plan-3', group_id: 'group-1', order: 26,
-    title: 'Learn common caching problems',
-    scheduled_date: getTodayDateString(3), status: 'pending'
-  },
-  {
-    id: 'sd-d4-7', plan_id: 'plan-3', group_id: 'group-1', order: 27,
-    title: 'Understand cache invalidation (Practice: add caching to e-commerce design)',
-    scheduled_date: getTodayDateString(3), status: 'pending'
-  },
-
-  // Day 5 — Load Balancing (Day +4)
-  {
-    id: 'sd-d5-1', plan_id: 'plan-3', group_id: 'group-1', order: 28,
-    title: 'Understand why load balancers are required',
-    scheduled_date: getTodayDateString(4), status: 'pending'
-  },
-  {
-    id: 'sd-d5-2', plan_id: 'plan-3', group_id: 'group-1', order: 29,
-    title: 'Learn Layer 4 vs Layer 7 load balancing',
-    scheduled_date: getTodayDateString(4), status: 'pending'
-  },
-  {
-    id: 'sd-d5-3', plan_id: 'plan-3', group_id: 'group-1', order: 30,
-    title: 'Understand round-robin and health checks',
-    scheduled_date: getTodayDateString(4), status: 'pending'
-  },
-  {
-    id: 'sd-d5-4', plan_id: 'plan-3', group_id: 'group-1', order: 31,
-    title: 'Understand horizontal scaling',
-    scheduled_date: getTodayDateString(4), status: 'pending'
-  },
-  {
-    id: 'sd-d5-5', plan_id: 'plan-3', group_id: 'group-1', order: 32,
-    title: 'Learn the concept of reverse proxy',
-    scheduled_date: getTodayDateString(4), status: 'pending'
-  },
-  {
-    id: 'sd-d5-6', plan_id: 'plan-3', group_id: 'group-1', order: 33,
-    title: 'Practice: Draw Users → Load Balancer → Servers → Database',
-    scheduled_date: getTodayDateString(4), status: 'pending'
-  },
-
-  // Day 6 — Scalability & Bottlenecks (Day +5)
-  {
-    id: 'sd-d6-1', plan_id: 'plan-3', group_id: 'group-1', order: 34,
-    title: 'Learn how to identify bottlenecks',
-    scheduled_date: getTodayDateString(5), status: 'pending'
-  },
-  {
-    id: 'sd-d6-2', plan_id: 'plan-3', group_id: 'group-1', order: 35,
-    title: 'Understand CPU-bound vs I/O-bound systems',
-    scheduled_date: getTodayDateString(5), status: 'pending'
-  },
-  {
-    id: 'sd-d6-3', plan_id: 'plan-3', group_id: 'group-1', order: 36,
-    title: 'Learn database bottlenecks',
-    scheduled_date: getTodayDateString(5), status: 'pending'
-  },
-  {
-    id: 'sd-d6-4', plan_id: 'plan-3', group_id: 'group-1', order: 37,
-    title: 'Understand read-heavy vs write-heavy workloads',
-    scheduled_date: getTodayDateString(5), status: 'pending'
-  },
-  {
-    id: 'sd-d6-5', plan_id: 'plan-3', group_id: 'group-1', order: 38,
-    title: 'Learn read replicas',
-    scheduled_date: getTodayDateString(5), status: 'pending'
-  },
-  {
-    id: 'sd-d6-6', plan_id: 'plan-3', group_id: 'group-1', order: 39,
-    title: 'Understand database connection pooling',
-    scheduled_date: getTodayDateString(5), status: 'pending'
-  },
-  {
-    id: 'sd-d6-7', plan_id: 'plan-3', group_id: 'group-1', order: 40,
-    title: 'Learn basic capacity estimation (Practice: estimate servers for 10k req/s)',
-    scheduled_date: getTodayDateString(5), status: 'pending'
-  },
-
-  // Day 7 — Mini System Design Interview: URL Shortener (Day +6)
-  {
-    id: 'sd-d7-1', plan_id: 'plan-3', group_id: 'group-1', order: 41,
-    title: 'Clarify requirements for URL Shortener system design',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-2', plan_id: 'plan-3', group_id: 'group-1', order: 42,
-    title: 'Estimate traffic and storage',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-3', plan_id: 'plan-3', group_id: 'group-1', order: 43,
-    title: 'Define APIs for URL Shortener',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-4', plan_id: 'plan-3', group_id: 'group-1', order: 44,
-    title: 'Design the database schema',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-5', plan_id: 'plan-3', group_id: 'group-1', order: 45,
-    title: 'Create high-level architecture diagram',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-6', plan_id: 'plan-3', group_id: 'group-1', order: 46,
-    title: 'Add caching layer to URL Shortener design',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-7', plan_id: 'plan-3', group_id: 'group-1', order: 47,
-    title: 'Add load balancing to URL Shortener design',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-8', plan_id: 'plan-3', group_id: 'group-1', order: 48,
-    title: 'Identify bottlenecks in URL Shortener design',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
-  {
-    id: 'sd-d7-9', plan_id: 'plan-3', group_id: 'group-1', order: 49,
-    title: 'Explain how the URL Shortener scales — Week 1 Deliverable complete!',
-    scheduled_date: getTodayDateString(6), status: 'pending'
-  },
+  // Arrays & Hashing
+  { id: 'sk-dsa-1-1', plan_id: 'plan-dsa', topic_id: 't-dsa-1', group_id: 'group-1', title: 'Two Sum', description: 'Use a hash map to find pairs. Classic O(n) solution.', resources: 'LeetCode #1', order: 1 },
+  { id: 'sk-dsa-1-2', plan_id: 'plan-dsa', topic_id: 't-dsa-1', group_id: 'group-1', title: 'Contains Duplicate', description: 'Hash set approach. Understand why sorted-array approach is O(n log n).', resources: 'LeetCode #217', order: 2 },
+  { id: 'sk-dsa-1-3', plan_id: 'plan-dsa', topic_id: 't-dsa-1', group_id: 'group-1', title: 'Valid Anagram', description: 'Character frequency count. Two approaches: sort or hash map.', resources: 'LeetCode #242', order: 3 },
+  { id: 'sk-dsa-1-4', plan_id: 'plan-dsa', topic_id: 't-dsa-1', group_id: 'group-1', title: 'Group Anagrams', description: 'Use sorted word as key in hash map to bucket anagrams.', resources: 'LeetCode #49', order: 4 },
+  { id: 'sk-dsa-1-5', plan_id: 'plan-dsa', topic_id: 't-dsa-1', group_id: 'group-1', title: 'Top K Frequent Elements', description: 'Heap or bucket sort. Learn when to use each.', resources: 'LeetCode #347', priority: 'high', order: 5 },
+  { id: 'sk-dsa-1-6', plan_id: 'plan-dsa', topic_id: 't-dsa-1', group_id: 'group-1', title: 'Product of Array Except Self', description: 'Prefix and postfix arrays. No division allowed — key constraint.', resources: 'LeetCode #238', priority: 'high', order: 6 },
+  // Two Pointers
+  { id: 'sk-dsa-2-1', plan_id: 'plan-dsa', topic_id: 't-dsa-2', group_id: 'group-1', title: 'Valid Palindrome', description: 'Two pointers from both ends. Handle non-alphanumeric chars.', resources: 'LeetCode #125', order: 1 },
+  { id: 'sk-dsa-2-2', plan_id: 'plan-dsa', topic_id: 't-dsa-2', group_id: 'group-1', title: 'Two Sum II (Sorted Input)', description: 'Classic two-pointer on sorted array. Binary search alternative.', resources: 'LeetCode #167', order: 2 },
+  { id: 'sk-dsa-2-3', plan_id: 'plan-dsa', topic_id: 't-dsa-2', group_id: 'group-1', title: '3Sum', description: 'Sort + fix one element + two pointers. Deduplication logic is key.', resources: 'LeetCode #15', priority: 'high', order: 3 },
+  { id: 'sk-dsa-2-4', plan_id: 'plan-dsa', topic_id: 't-dsa-2', group_id: 'group-1', title: 'Container With Most Water', description: 'Greedy two-pointer. Always shrink the side with shorter height.', resources: 'LeetCode #11', priority: 'high', order: 4 },
+  // Sliding Window
+  { id: 'sk-dsa-3-1', plan_id: 'plan-dsa', topic_id: 't-dsa-3', group_id: 'group-1', title: 'Best Time to Buy & Sell Stock', description: 'Track running minimum. One-pass O(n).', resources: 'LeetCode #121', order: 1 },
+  { id: 'sk-dsa-3-2', plan_id: 'plan-dsa', topic_id: 't-dsa-3', group_id: 'group-1', title: 'Longest Substring Without Repeating', description: 'Sliding window with a set. Expand right, shrink left on collision.', resources: 'LeetCode #3', priority: 'high', order: 2 },
+  { id: 'sk-dsa-3-3', plan_id: 'plan-dsa', topic_id: 't-dsa-3', group_id: 'group-1', title: 'Longest Repeating Character Replacement', description: 'Window validity: count of majority char + replacements ≤ k.', resources: 'LeetCode #424', priority: 'high', order: 3 },
+  { id: 'sk-dsa-3-4', plan_id: 'plan-dsa', topic_id: 't-dsa-3', group_id: 'group-1', title: 'Minimum Window Substring', description: 'Hard. Track frequency needs. Shrink window once all chars are met.', resources: 'LeetCode #76', priority: 'high', order: 4 },
+  // Binary Search
+  { id: 'sk-dsa-4-1', plan_id: 'plan-dsa', topic_id: 't-dsa-4', group_id: 'group-1', title: 'Binary Search (classic)', description: 'Template: lo, hi, mid. Off-by-one errors explained.', resources: 'LeetCode #704', order: 1 },
+  { id: 'sk-dsa-4-2', plan_id: 'plan-dsa', topic_id: 't-dsa-4', group_id: 'group-1', title: 'Search in Rotated Sorted Array', description: 'Determine which half is sorted, then binary search within it.', resources: 'LeetCode #33', priority: 'high', order: 2 },
+  { id: 'sk-dsa-4-3', plan_id: 'plan-dsa', topic_id: 't-dsa-4', group_id: 'group-1', title: 'Koko Eating Bananas', description: 'Binary search on the answer range. Common interview pattern.', resources: 'LeetCode #875', priority: 'high', order: 3 },
+  // Linked Lists
+  { id: 'sk-dsa-5-1', plan_id: 'plan-dsa', topic_id: 't-dsa-5', group_id: 'group-1', title: 'Reverse Linked List', description: 'Iterative and recursive. Master both — interviewers ask to switch.', resources: 'LeetCode #206', order: 1 },
+  { id: 'sk-dsa-5-2', plan_id: 'plan-dsa', topic_id: 't-dsa-5', group_id: 'group-1', title: 'Merge Two Sorted Lists', description: 'Iterative pointer approach. Create dummy head to simplify.', resources: 'LeetCode #21', order: 2 },
+  { id: 'sk-dsa-5-3', plan_id: 'plan-dsa', topic_id: 't-dsa-5', group_id: 'group-1', title: 'Linked List Cycle', description: 'Floyd\'s slow/fast pointer algorithm.', resources: 'LeetCode #141', priority: 'high', order: 3 },
+  // Trees
+  { id: 'sk-dsa-6-1', plan_id: 'plan-dsa', topic_id: 't-dsa-6', group_id: 'group-1', title: 'Invert Binary Tree', description: 'Recursive DFS. The classic "Did you invert a binary tree?" question.', resources: 'LeetCode #226', order: 1 },
+  { id: 'sk-dsa-6-2', plan_id: 'plan-dsa', topic_id: 't-dsa-6', group_id: 'group-1', title: 'Maximum Depth of Binary Tree', description: 'DFS height calculation. Base case: null → 0.', resources: 'LeetCode #104', order: 2 },
+  { id: 'sk-dsa-6-3', plan_id: 'plan-dsa', topic_id: 't-dsa-6', group_id: 'group-1', title: 'Level Order Traversal (BFS)', description: 'Queue-based BFS. Foundation for many tree interview questions.', resources: 'LeetCode #102', priority: 'high', order: 3 },
+  { id: 'sk-dsa-6-4', plan_id: 'plan-dsa', topic_id: 't-dsa-6', group_id: 'group-1', title: 'Validate Binary Search Tree', description: 'Pass min/max bounds through recursion.', resources: 'LeetCode #98', priority: 'high', order: 4 },
+  // DP
+  { id: 'sk-dsa-7-1', plan_id: 'plan-dsa', topic_id: 't-dsa-7', group_id: 'group-1', title: 'Climbing Stairs', description: 'Fibonacci pattern. Your first DP problem.', resources: 'LeetCode #70', order: 1 },
+  { id: 'sk-dsa-7-2', plan_id: 'plan-dsa', topic_id: 't-dsa-7', group_id: 'group-1', title: 'House Robber', description: '1D DP. dp[i] = max(dp[i-1], dp[i-2] + nums[i]).', resources: 'LeetCode #198', order: 2 },
+  { id: 'sk-dsa-7-3', plan_id: 'plan-dsa', topic_id: 't-dsa-7', group_id: 'group-1', title: 'Coin Change', description: 'Bottom-up DP. Classic unbounded knapsack variant.', resources: 'LeetCode #322', priority: 'high', order: 3 },
+  { id: 'sk-dsa-7-4', plan_id: 'plan-dsa', topic_id: 't-dsa-7', group_id: 'group-1', title: 'Longest Common Subsequence', description: '2D DP. Core of diff/merge algorithms.', resources: 'LeetCode #1143', priority: 'high', order: 4 },
+  // System Design topics
+  { id: 'sk-sd-1-1', plan_id: 'plan-sd', topic_id: 't-sd-1', group_id: 'group-1', title: 'What is scalability?', description: 'Vertical vs horizontal scaling. When to use each. Understand stateless services.', order: 1 },
+  { id: 'sk-sd-1-2', plan_id: 'plan-sd', topic_id: 't-sd-1', group_id: 'group-1', title: 'CAP Theorem', description: 'Consistency, Availability, Partition Tolerance. Real examples: Cassandra vs MySQL.', priority: 'high', order: 2 },
+  { id: 'sk-sd-1-3', plan_id: 'plan-sd', topic_id: 't-sd-1', group_id: 'group-1', title: 'Load Balancers', description: 'Round robin, L4 vs L7, health checks, sticky sessions.', order: 3 },
+  { id: 'sk-sd-2-1', plan_id: 'plan-sd', topic_id: 't-sd-2', group_id: 'group-1', title: 'SQL vs NoSQL — when to choose', description: 'ACID vs BASE. Understand trade-offs with real use cases.', priority: 'high', order: 1 },
+  { id: 'sk-sd-2-2', plan_id: 'plan-sd', topic_id: 't-sd-2', group_id: 'group-1', title: 'Database Indexing & Query Optimization', description: 'B-tree indexes, composite indexes, EXPLAIN query.', order: 2 },
+  { id: 'sk-sd-2-3', plan_id: 'plan-sd', topic_id: 't-sd-2', group_id: 'group-1', title: 'Database Sharding & Replication', description: 'Horizontal partitioning, read replicas, master-slave.', order: 3 },
+  { id: 'sk-sd-3-1', plan_id: 'plan-sd', topic_id: 't-sd-3', group_id: 'group-1', title: 'Redis fundamentals & use cases', description: 'Data types, eviction policies, persistence options.', priority: 'high', order: 1 },
+  { id: 'sk-sd-3-2', plan_id: 'plan-sd', topic_id: 't-sd-3', group_id: 'group-1', title: 'Cache invalidation strategies', description: 'Write-through, write-back, cache-aside, read-through.', order: 2 },
+  { id: 'sk-sd-4-1', plan_id: 'plan-sd', topic_id: 't-sd-4', group_id: 'group-1', title: 'Design URL Shortener', description: 'Full end-to-end: APIs, hash function, DB schema, caching, scaling.', priority: 'high', order: 1 },
+  { id: 'sk-sd-4-2', plan_id: 'plan-sd', topic_id: 't-sd-4', group_id: 'group-1', title: 'Design Instagram', description: 'Photo storage, feed generation (push vs pull), CDN, follow graph.', priority: 'high', order: 2 },
+  { id: 'sk-sd-4-3', plan_id: 'plan-sd', topic_id: 't-sd-4', group_id: 'group-1', title: 'Design WhatsApp / Chat System', description: 'WebSockets, message delivery guarantees, group chats, read receipts.', priority: 'high', order: 3 },
 ];
 
-let demoDailyLogs: DailyLog[] = [
-  {
-    id: 'log-1',
-    task_id: 'task-2',
-    plan_id: 'plan-1',
-    group_id: 'group-1',
-    user_id: 'user-1',
-    completed_at: new Date().toISOString(),
-    date: todayStr
-  },
-  {
-    id: 'log-2',
-    task_id: 'task-5',
-    plan_id: 'plan-2',
-    group_id: 'group-1',
-    user_id: 'user-1',
-    completed_at: new Date().toISOString(),
-    date: todayStr
-  },
-  // Sarah completed 2 tasks today
-  {
-    id: 'log-3',
-    task_id: 'task-2',
-    plan_id: 'plan-1',
-    group_id: 'group-1',
-    user_id: 'user-2',
-    completed_at: new Date().toISOString(),
-    date: todayStr
-  },
-  {
-    id: 'log-4',
-    task_id: 'task-6',
-    plan_id: 'plan-2',
-    group_id: 'group-1',
-    user_id: 'user-2',
-    completed_at: new Date().toISOString(),
-    date: todayStr
-  }
+// Demo per-user subtask statuses
+// Alex (user-1) is ahead — finished Arrays & Hashing, doing Two Pointers
+// Sarah (user-2) is mid-way through Arrays & Hashing
+// Marcus (user-3) just started
+let demoStatuses: UserSubtaskStatus[] = [
+  // Alex — Arrays & Hashing all completed
+  ...['sk-dsa-1-1','sk-dsa-1-2','sk-dsa-1-3','sk-dsa-1-4','sk-dsa-1-5','sk-dsa-1-6'].map(id => ({
+    id: `${id}_user-1`, task_id: id, topic_id: 't-dsa-1', plan_id: 'plan-dsa', group_id: 'group-1',
+    user_id: 'user-1', status: 'completed' as SubtaskStatus, completed_at: getTodayDateString(-3)
+  })),
+  // Alex — Two Pointers: 2 done, 1 in progress
+  { id: 'sk-dsa-2-1_user-1', task_id: 'sk-dsa-2-1', topic_id: 't-dsa-2', plan_id: 'plan-dsa', group_id: 'group-1', user_id: 'user-1', status: 'completed', completed_at: getTodayDateString(-1) },
+  { id: 'sk-dsa-2-2_user-1', task_id: 'sk-dsa-2-2', topic_id: 't-dsa-2', plan_id: 'plan-dsa', group_id: 'group-1', user_id: 'user-1', status: 'completed', completed_at: todayStr },
+  { id: 'sk-dsa-2-3_user-1', task_id: 'sk-dsa-2-3', topic_id: 't-dsa-2', plan_id: 'plan-dsa', group_id: 'group-1', user_id: 'user-1', status: 'in_progress', started_at: todayStr },
+  // Sarah — Arrays: 4 done
+  ...['sk-dsa-1-1','sk-dsa-1-2','sk-dsa-1-3','sk-dsa-1-4'].map(id => ({
+    id: `${id}_user-2`, task_id: id, topic_id: 't-dsa-1', plan_id: 'plan-dsa', group_id: 'group-1',
+    user_id: 'user-2', status: 'completed' as SubtaskStatus, completed_at: getTodayDateString(-2)
+  })),
+  { id: 'sk-dsa-1-5_user-2', task_id: 'sk-dsa-1-5', topic_id: 't-dsa-1', plan_id: 'plan-dsa', group_id: 'group-1', user_id: 'user-2', status: 'in_progress', started_at: todayStr },
+  // Marcus — just the first 2
+  { id: 'sk-dsa-1-1_user-3', task_id: 'sk-dsa-1-1', topic_id: 't-dsa-1', plan_id: 'plan-dsa', group_id: 'group-1', user_id: 'user-3', status: 'completed', completed_at: todayStr },
+  { id: 'sk-dsa-1-2_user-3', task_id: 'sk-dsa-1-2', topic_id: 't-dsa-1', plan_id: 'plan-dsa', group_id: 'group-1', user_id: 'user-3', status: 'in_progress', started_at: todayStr },
 ];
 
-// Event listeners for demo mode reactive updates
+// Personal notes per user per task
+let demoNotes: { id: string; task_id: string; user_id: string; note: string; updated_at: string }[] = [];
+
+// ─── Event Bus ──────────────────────────────────────────────────────────────
 type Listener = () => void;
 const demoListeners: Set<Listener> = new Set();
-function notifyDemoListeners() {
-  demoListeners.forEach(fn => fn());
-}
+function notify() { demoListeners.forEach(fn => fn()); }
 
+// ─── Service ────────────────────────────────────────────────────────────────
 export const studyService = {
-  // isDemo can be toggled at runtime:
-  // - starts false if real Firebase creds are detected
-  // - set to true explicitly when user picks Demo Mode
   isDemo: !isRealFirebaseConfigured,
-
-  enableDemoMode() {
-    this.isDemo = true;
+  enableDemoMode() { this.isDemo = true; },
+  enableFirebaseMode() { this.isDemo = false; },
+  subscribe(cb: Listener): () => void {
+    demoListeners.add(cb);
+    return () => { demoListeners.delete(cb); };
   },
 
-  enableFirebaseMode() {
-    this.isDemo = false;
-  },
-
-  // Subscribe to updates (triggers callback on change)
-  subscribe(callback: Listener): () => void {
-    demoListeners.add(callback);
-    return () => demoListeners.delete(callback);
-  },
-
-  // USER FUNCTIONS
+  // ── Users ────────────────────────────────────────────────────────────────
   async getCurrentUser(uid: string): Promise<User> {
-    if (this.isDemo || !db) {
-      return DEMO_USERS[uid] || DEMO_USERS['user-1'];
-    }
-    const snap = await getDoc(doc(db, 'users', uid));
-    if (snap.exists()) {
-      return snap.data() as User;
-    }
-    return DEMO_USERS['user-1'];
+    if (this.isDemo || !db) return DEMO_USERS[uid] || DEMO_USERS['user-1'];
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      return snap.exists() ? snap.data() as User : DEMO_USERS['user-1'];
+    } catch { return DEMO_USERS['user-1']; }
   },
 
   async saveUser(user: User): Promise<void> {
-    if (this.isDemo || !db) {
-      DEMO_USERS[user.id] = user;
-      notifyDemoListeners();
-      return;
-    }
-    await setDoc(doc(db, 'users', user.id), user, { merge: true });
+    if (this.isDemo || !db) return;
+    try { await setDoc(doc(db, 'users', user.id), { ...user, updatedAt: new Date().toISOString() }, { merge: true }); }
+    catch (e) { console.warn('saveUser:', e); }
   },
 
-  // GROUP FUNCTIONS
+  // ── Groups ───────────────────────────────────────────────────────────────
   async getUserGroups(userId: string): Promise<Group[]> {
-    if (this.isDemo || !db) {
-      const groups = demoGroups.filter(g => g.members.includes(userId));
-      return groups.length > 0 ? groups : demoGroups;
-    }
+    if (this.isDemo || !db) return demoGroups.filter(g => g.members.includes(userId));
     try {
-      const q = query(collection(db, 'groups'), where('members', 'array-contains', userId));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as Group));
-      }
-      // If user has no groups in Firestore yet, auto-create a starter group with the System Design & LeetCode plans
-      const starter = await this.createStarterGroupForUser(userId);
-      return [starter];
-    } catch (err) {
-      console.warn("Firestore getUserGroups query warning, fallback to demo groups:", err);
-      return demoGroups;
-    }
-  },
-
-  async createStarterGroupForUser(userId: string): Promise<Group> {
-    const starterGroup = await this.createGroup('System Design & Core CS Sprint', userId);
-    // Add Week 1 System Design tasks
-    const sdTasks = demoTasks.filter(t => t.plan_id === 'plan-3').map(t => ({
-      title: t.title,
-      scheduled_date: t.scheduled_date || undefined
-    }));
-    await this.createPlan(starterGroup.id, 'Week 1: System Design Foundations', 'fixed', getTodayDateString(6), sdTasks, userId);
-
-    // Add LeetCode Sprint
-    const leetTasks = demoTasks.filter(t => t.plan_id === 'plan-2').map(t => ({
-      title: t.title
-    }));
-    await this.createPlan(starterGroup.id, 'LeetCode & Algorithms Sprint', 'rolling', getTodayDateString(7), leetTasks, userId);
-    return starterGroup;
+      const snap = await getDocs(query(collection(db, 'groups'), where('members', 'array-contains', userId)));
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Group));
+    } catch { return demoGroups.filter(g => g.members.includes(userId)); }
   },
 
   async createGroup(name: string, userId: string): Promise<Group> {
-    const invite_code = generateInviteCode();
-    const newGroup: Group = {
-      id: `group-${Date.now()}`,
-      name,
-      invite_code,
-      members: [userId],
-      createdBy: userId,
-      createdAt: new Date().toISOString()
-    };
-
-    if (this.isDemo || !db) {
-      demoGroups.push(newGroup);
-      notifyDemoListeners();
-      return newGroup;
-    }
-
-    const ref = doc(collection(db, 'groups'));
-    const groupWithId = { ...newGroup, id: ref.id };
-    await setDoc(ref, groupWithId);
-    return groupWithId;
+    const newGroup: Group = { id: `group-${Date.now()}`, name, invite_code: generateInviteCode(), members: [userId], createdBy: userId, createdAt: new Date().toISOString() };
+    if (this.isDemo || !db) { demoGroups.push(newGroup); notify(); return newGroup; }
+    try {
+      const ref = doc(collection(db, 'groups'));
+      const g = { ...newGroup, id: ref.id };
+      await setDoc(ref, g);
+      return g;
+    } catch { demoGroups.push(newGroup); return newGroup; }
   },
 
-  async joinGroup(inviteCode: string, userId: string): Promise<Group> {
-    const code = inviteCode.trim().toUpperCase();
+  async joinGroup(code: string, userId: string): Promise<Group> {
+    const cleanCode = code.trim().toUpperCase();
+
     if (this.isDemo || !db) {
-      const group = demoGroups.find(g => g.invite_code === code);
-      if (!group) throw new Error('Invalid invite code');
-      if (!group.members.includes(userId)) {
-        group.members.push(userId);
-        notifyDemoListeners();
-      }
+      const group = demoGroups.find(g => g.invite_code === cleanCode);
+      if (!group) throw new Error(`No group found with invite code "${cleanCode}".`);
+      if (!group.members.includes(userId)) group.members.push(userId);
+      notify();
       return group;
     }
 
-    const q = query(collection(db, 'groups'), where('invite_code', '==', code));
-    const snap = await getDocs(q);
-    if (snap.empty) throw new Error('Group not found with that invite code');
-    const groupDoc = snap.docs[0];
-    const group = { id: groupDoc.id, ...groupDoc.data() } as Group;
-
-    if (!group.members.includes(userId)) {
-      const updatedMembers = [...group.members, userId];
-      await updateDoc(doc(db, 'groups', group.id), { members: updatedMembers });
-      group.members = updatedMembers;
+    try {
+      const snap = await getDocs(query(collection(db, 'groups'), where('invite_code', '==', cleanCode)));
+      if (snap.empty) {
+        // Check if it exists in local memory as fallback
+        const localGroup = demoGroups.find(g => g.invite_code === cleanCode);
+        if (localGroup) {
+          if (!localGroup.members.includes(userId)) localGroup.members.push(userId);
+          notify();
+          return localGroup;
+        }
+        throw new Error(`No group found with invite code "${cleanCode}".`);
+      }
+      const d = snap.docs[0];
+      const group = { id: d.id, ...d.data() } as Group;
+      if (!group.members.includes(userId)) {
+        const updated = [...group.members, userId];
+        await updateDoc(doc(db, 'groups', group.id), { members: updated });
+        group.members = updated;
+      }
+      return group;
+    } catch (e: any) {
+      console.warn('Firestore joinGroup notice:', e);
+      // Check local store before failing
+      const localGroup = demoGroups.find(g => g.invite_code === cleanCode);
+      if (localGroup) {
+        if (!localGroup.members.includes(userId)) localGroup.members.push(userId);
+        notify();
+        return localGroup;
+      }
+      if (e?.code === 'permission-denied' || e?.message?.includes('permission')) {
+        throw new Error('Firebase permission denied. Please ensure Firestore Security Rules are published in your Firebase Console.');
+      }
+      throw e;
     }
-    return group;
   },
 
   async getGroupMembers(groupId: string): Promise<User[]> {
     if (this.isDemo || !db) {
-      const group = demoGroups.find(g => g.id === groupId);
-      if (!group) return [];
-      return group.members.map(mId => DEMO_USERS[mId] || {
-        id: mId,
-        name: `Member (${mId.slice(0, 5)})`,
-        email: `${mId}@study.app`,
-        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80'
-      });
-    }
-
-    const groupSnap = await getDoc(doc(db, 'groups', groupId));
-    if (!groupSnap.exists()) return [];
-    const group = groupSnap.data() as Group;
-
-    const users: User[] = [];
-    for (const mId of group.members) {
-      const uSnap = await getDoc(doc(db, 'users', mId));
-      if (uSnap.exists()) {
-        users.push(uSnap.data() as User);
-      }
-    }
-    return users;
-  },
-
-  // PLAN FUNCTIONS
-  async getGroupPlans(groupId: string): Promise<Plan[]> {
-    if (this.isDemo || !db) {
-      const plans = demoPlans.filter(p => p.group_id === groupId);
-      return plans.length > 0 ? plans : demoPlans;
+      const g = demoGroups.find(g => g.id === groupId);
+      if (!g) return [];
+      return g.members.map(id => DEMO_USERS[id] || { id, name: 'Member', email: '', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80' });
     }
     try {
-      const q = query(collection(db, 'plans'), where('group_id', '==', groupId));
-      const snap = await getDocs(q);
-      const plans = snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as Plan));
-      return plans.length > 0 ? plans : demoPlans;
-    } catch (err) {
-      console.warn("Firestore getGroupPlans warning, using fallback plans:", err);
-      return demoPlans;
-    }
+      const snap = await getDoc(doc(db, 'groups', groupId));
+      if (!snap.exists()) return [];
+      const members = (snap.data() as Group).members;
+      const users = await Promise.all(members.map(async id => {
+        const us = await getDoc(doc(db, 'users', id));
+        return us.exists() ? us.data() as User : null;
+      }));
+      return users.filter(Boolean) as User[];
+    } catch { return []; }
   },
 
-  async createPlan(
+  // ── Plans ─────────────────────────────────────────────────────────────────
+  async getGroupPlans(groupId: string): Promise<Plan[]> {
+    if (this.isDemo || !db) return demoPlans.filter(p => p.group_id === groupId);
+    try {
+      const snap = await getDocs(query(collection(db, 'plans'), where('group_id', '==', groupId)));
+      const plans = snap.docs.map(d => ({ id: d.id, ...d.data() } as Plan));
+      return plans.length > 0 ? plans : demoPlans.filter(p => p.group_id === groupId);
+    } catch { return demoPlans.filter(p => p.group_id === groupId); }
+  },
+
+  /**
+   * Create a plan with a structured topic → subtask outline.
+   * This is the main entry point from PlanSetupWizard.
+   */
+  async createPlanWithTopics(
     groupId: string,
-    title: string,
-    type: 'fixed' | 'rolling',
-    deadline: string | undefined,
-    tasks: { title: string; scheduled_date?: string }[],
-    userId: string
+    userId: string,
+    planData: { title: string; description?: string; type: 'roadmap' | 'sprint'; start_date?: string; end_date?: string },
+    topicsData: {
+      title: string;
+      description?: string;
+      estimated_days?: number;
+      tasks: {
+        title: string;
+        description?: string;
+        resources?: string;
+        priority?: 'low' | 'medium' | 'high';
+        estimated_hours?: number;
+      }[];
+    }[]
   ): Promise<Plan> {
-    const newPlan: Plan = {
+    const plan: Plan = {
       id: `plan-${Date.now()}`,
       group_id: groupId,
-      title,
-      type,
-      deadline: deadline || null,
+      title: planData.title,
+      description: planData.description || null,
+      type: planData.type,
+      start_date: planData.start_date || null,
+      end_date: planData.end_date || null,
       createdBy: userId,
       createdAt: new Date().toISOString()
     };
 
     if (this.isDemo || !db) {
-      demoPlans.push(newPlan);
-      tasks.forEach((t, index) => {
-        demoTasks.push({
-          id: `task-${Date.now()}-${index}`,
-          plan_id: newPlan.id,
+      demoPlans.push(plan);
+      topicsData.forEach((td, ti) => {
+        const topic: PlanTopic = {
+          id: `topic-${Date.now()}-${ti}`,
+          plan_id: plan.id,
           group_id: groupId,
-          title: t.title,
-          scheduled_date: t.scheduled_date || null,
-          status: 'pending',
-          order: index + 1
+          title: td.title,
+          description: td.description || null,
+          estimated_days: td.estimated_days || null,
+          order: ti + 1
+        };
+        demoTopics.push(topic);
+        td.tasks.forEach((tk, ki) => {
+          demoTasks.push({
+            id: `task-${Date.now()}-${ti}-${ki}`,
+            plan_id: plan.id,
+            topic_id: topic.id,
+            group_id: groupId,
+            title: tk.title,
+            description: tk.description || null,
+            resources: tk.resources || null,
+            priority: tk.priority || 'medium',
+            estimated_hours: tk.estimated_hours || null,
+            order: ki + 1
+          });
         });
       });
-      notifyDemoListeners();
-      return newPlan;
+      notify();
+      return plan;
     }
 
     try {
       const planRef = doc(collection(db, 'plans'));
-      const planWithId = { ...newPlan, id: planRef.id };
+      const planWithId = { ...plan, id: planRef.id };
       await setDoc(planRef, planWithId);
 
-      // Save tasks
-      for (let i = 0; i < tasks.length; i++) {
-        const taskRef = doc(collection(db, 'plan_tasks'));
-        const task: PlanTask = {
-          id: taskRef.id,
-          plan_id: planWithId.id,
-          group_id: groupId,
-          title: tasks[i].title,
-          scheduled_date: tasks[i].scheduled_date || null,
-          status: 'pending',
-          order: i + 1
+      for (let ti = 0; ti < topicsData.length; ti++) {
+        const td = topicsData[ti];
+        const topicRef = doc(collection(db, 'plan_topics'));
+        const topic: PlanTopic = {
+          id: topicRef.id, plan_id: planWithId.id, group_id: groupId,
+          title: td.title, description: td.description || null,
+          estimated_days: td.estimated_days || null, order: ti + 1
         };
-        await setDoc(taskRef, task);
+        await setDoc(topicRef, topic);
+
+        for (let ki = 0; ki < td.tasks.length; ki++) {
+          const tk = td.tasks[ki];
+          const taskRef = doc(collection(db, 'plan_tasks'));
+          const task: PlanTask = {
+            id: taskRef.id, plan_id: planWithId.id, topic_id: topic.id, group_id: groupId,
+            title: tk.title, description: tk.description || null, resources: tk.resources || null,
+            priority: tk.priority || 'medium', estimated_hours: tk.estimated_hours || null, order: ki + 1
+          };
+          await setDoc(taskRef, task);
+        }
       }
       return planWithId;
     } catch (err) {
-      console.warn("Firestore createPlan fallback to local:", err);
-      demoPlans.push(newPlan);
-      return newPlan;
+      console.warn('createPlanWithTopics fallback:', err);
+      demoPlans.push(plan);
+      return plan;
     }
   },
 
-  // THE DAILY PULL LOGIC (CRUCIAL ENGINE)
-  // Dynamic daily pull logic:
-  // For Fixed Plans: Pull tasks scheduled for today + overdue tasks from past dates that are pending.
-  // For Rolling Plans: Pull top 3-5 pending tasks in the backlog queue.
-  async getDailyTasksForUser(groupId: string, userId: string): Promise<{
-    tasks: DailyPullTask[];
-    userCompletedToday: number;
-    userTotalToday: number;
-    dailyPercentage: number;
-  }> {
-    const today = getTodayDateString(0);
-
-    let allGroupPlans: Plan[] = [];
-    let allGroupTasks: PlanTask[] = [];
-    let todayLogs: DailyLog[] = [];
-
+  // ── Topics & Tasks ───────────────────────────────────────────────────────
+  async getTopicsWithTasks(planId: string): Promise<TopicWithTasks[]> {
     if (this.isDemo || !db) {
-      allGroupPlans = demoPlans.filter(p => p.group_id === groupId);
-      if (allGroupPlans.length === 0) allGroupPlans = demoPlans;
-      allGroupTasks = demoTasks.filter(t => t.group_id === groupId || allGroupPlans.some(p => p.id === t.plan_id));
-      if (allGroupTasks.length === 0) allGroupTasks = demoTasks;
-      todayLogs = demoDailyLogs.filter(l => l.group_id === groupId && l.date === today && l.user_id === userId);
-    } else {
-      try {
-        const pSnap = await getDocs(query(collection(db, 'plans'), where('group_id', '==', groupId)));
-        allGroupPlans = pSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as Plan));
-
-        const tSnap = await getDocs(query(collection(db, 'plan_tasks'), where('group_id', '==', groupId)));
-        allGroupTasks = tSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as PlanTask));
-
-        const lSnap = await getDocs(query(
-          collection(db, 'daily_logs'), 
-          where('group_id', '==', groupId),
-          where('date', '==', today),
-          where('user_id', '==', userId)
-        ));
-        todayLogs = lSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as DailyLog));
-      } catch (err) {
-        console.warn("Firestore getDailyTasks error, using demo fallback:", err);
-      }
-
-      if (allGroupPlans.length === 0) {
-        allGroupPlans = demoPlans;
-      }
-      if (allGroupTasks.length === 0) {
-        allGroupTasks = demoTasks;
-      }
+      const topics = demoTopics.filter(t => t.plan_id === planId).sort((a, b) => a.order - b.order);
+      return topics.map(topic => ({
+        topic,
+        tasks: demoTasks.filter(t => t.topic_id === topic.id).sort((a, b) => a.order - b.order)
+      }));
     }
+    try {
+      const topicSnap = await getDocs(query(collection(db, 'plan_topics'), where('plan_id', '==', planId)));
+      const topics = topicSnap.docs.map(d => ({ id: d.id, ...d.data() } as PlanTopic)).sort((a, b) => a.order - b.order);
 
-    const pulledTasks: DailyPullTask[] = [];
-    const completedTaskIdsUserToday = new Set(todayLogs.map(l => l.task_id));
+      const taskSnap = await getDocs(query(collection(db, 'plan_tasks'), where('plan_id', '==', planId)));
+      const allTasks = taskSnap.docs.map(d => ({ id: d.id, ...d.data() } as PlanTask));
 
-    for (const plan of allGroupPlans) {
-      const planTasks = allGroupTasks.filter(t => t.plan_id === plan.id);
-
-      if (plan.type === 'fixed') {
-        // FIXED PLAN PULL LOGIC:
-        // 1. Scheduled for Today (whether pending or completed)
-        // 2. Overdue: Scheduled before Today AND status is pending
-        for (const task of planTasks) {
-          const isCompletedByMe = completedTaskIdsUserToday.has(task.id);
-          const isToday = task.scheduled_date === today;
-          const isPast = task.scheduled_date && task.scheduled_date < today;
-          const isOverdue = Boolean(isPast && task.status === 'pending');
-
-          if (isToday || isOverdue || isCompletedByMe) {
-            pulledTasks.push({
-              ...task,
-              isOverdue,
-              planTitle: plan.title,
-              planType: plan.type
-            });
-          }
-        }
-      } else if (plan.type === 'rolling') {
-        // ROLLING BACKLOG PULL LOGIC:
-        // Automatically queue next 3 to 5 incomplete backlog tasks + tasks completed today
-        const completedToday = planTasks.filter(t => completedTaskIdsUserToday.has(t.id));
-        const pendingBacklog = planTasks
-          .filter(t => t.status === 'pending' && !completedTaskIdsUserToday.has(t.id))
-          .sort((a, b) => a.order - b.order)
-          .slice(0, 4); // Pull top 4 next items
-
-        const combined = [...completedToday, ...pendingBacklog];
-        for (const task of combined) {
-          pulledTasks.push({
-            ...task,
-            isOverdue: false,
-            planTitle: plan.title,
-            planType: plan.type
-          });
-        }
-      }
+      return topics.map(topic => ({
+        topic,
+        tasks: allTasks.filter(t => t.topic_id === topic.id).sort((a, b) => a.order - b.order)
+      }));
+    } catch {
+      const topics = demoTopics.filter(t => t.plan_id === planId).sort((a, b) => a.order - b.order);
+      return topics.map(topic => ({
+        topic,
+        tasks: demoTasks.filter(t => t.topic_id === topic.id).sort((a, b) => a.order - b.order)
+      }));
     }
+  },
 
-    // Calculate metrics
-    const userTotalToday = pulledTasks.length;
-    const userCompletedToday = pulledTasks.filter(t => 
-      completedTaskIdsUserToday.has(t.id) || (t.status === 'completed' && t.completed_by === userId)
-    ).length;
-    const dailyPercentage = userTotalToday > 0 ? Math.round((userCompletedToday / userTotalToday) * 100) : 0;
+  // ── Per-User Subtask Status ──────────────────────────────────────────────
+  /**
+   * Get all UserSubtaskStatuses for a user on a specific plan.
+   * Returns a map: taskId → UserSubtaskStatus for O(1) lookup in UI.
+   */
+  async getUserSubtaskStatuses(planId: string, userId: string): Promise<Record<string, UserSubtaskStatus>> {
+    if (this.isDemo || !db) {
+      const statuses = demoStatuses.filter(s => s.plan_id === planId && s.user_id === userId);
+      return Object.fromEntries(statuses.map(s => [s.task_id, s]));
+    }
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'user_subtask_statuses'),
+        where('plan_id', '==', planId),
+        where('user_id', '==', userId)
+      ));
+      const statuses = snap.docs.map(d => ({ id: d.id, ...d.data() } as UserSubtaskStatus));
+      return Object.fromEntries(statuses.map(s => [s.task_id, s]));
+    } catch {
+      const statuses = demoStatuses.filter(s => s.plan_id === planId && s.user_id === userId);
+      return Object.fromEntries(statuses.map(s => [s.task_id, s]));
+    }
+  },
 
-    return {
-      tasks: pulledTasks,
-      userCompletedToday,
-      userTotalToday,
-      dailyPercentage
+  /**
+   * Toggle subtask status for a user.
+   * Cycle: not_started → in_progress → completed → not_started
+   */
+  async cycleSubtaskStatus(
+    task: PlanTask,
+    userId: string,
+    currentStatus: SubtaskStatus | undefined
+  ): Promise<UserSubtaskStatus> {
+    const nextStatus: SubtaskStatus =
+      !currentStatus || currentStatus === 'not_started' ? 'in_progress' :
+      currentStatus === 'in_progress' ? 'completed' : 'not_started';
+
+    const now = new Date().toISOString();
+    const statusObj: UserSubtaskStatus = {
+      id: `${task.id}_${userId}`,
+      task_id: task.id,
+      topic_id: task.topic_id,
+      plan_id: task.plan_id,
+      group_id: task.group_id,
+      user_id: userId,
+      status: nextStatus,
+      started_at: nextStatus === 'in_progress' ? now : (nextStatus === 'completed' ? now : null),
+      completed_at: nextStatus === 'completed' ? now : null,
     };
-  },
-
-  // TOGGLE TASK COMPLETION
-  async toggleTaskCompletion(taskId: string, userId: string, currentStatus: 'pending' | 'completed', groupId: string): Promise<boolean> {
-    const today = getTodayDateString(0);
-    const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-    const nowIso = new Date().toISOString();
 
     if (this.isDemo || !db) {
-      const taskIndex = demoTasks.findIndex(t => t.id === taskId);
-      if (taskIndex !== -1) {
-        demoTasks[taskIndex].status = newStatus;
-        demoTasks[taskIndex].completed_by = newStatus === 'completed' ? userId : null;
-        demoTasks[taskIndex].completed_at = newStatus === 'completed' ? nowIso : null;
-      }
-
-      if (newStatus === 'completed') {
-        // Create daily log if not existing
-        const exists = demoDailyLogs.some(l => l.task_id === taskId && l.user_id === userId && l.date === today);
-        if (!exists) {
-          demoDailyLogs.push({
-            id: `log-${Date.now()}`,
-            task_id: taskId,
-            plan_id: demoTasks[taskIndex]?.plan_id || 'plan-1',
-            group_id: groupId,
-            user_id: userId,
-            completed_at: nowIso,
-            date: today
-          });
-        }
-      } else {
-        // Remove daily log
-        demoDailyLogs = demoDailyLogs.filter(l => !(l.task_id === taskId && l.user_id === userId && l.date === today));
-      }
-
-      notifyDemoListeners();
-      return newStatus === 'completed';
+      const idx = demoStatuses.findIndex(s => s.id === statusObj.id);
+      if (idx >= 0) demoStatuses[idx] = statusObj;
+      else demoStatuses.push(statusObj);
+      notify();
+      return statusObj;
     }
-
-    // Firestore Real DB Updates
-    const taskRef = doc(db, 'plan_tasks', taskId);
-    const taskSnap = await getDoc(taskRef);
-    const taskData = taskSnap.exists() ? taskSnap.data() as PlanTask : null;
-
-    await updateDoc(taskRef, {
-      status: newStatus,
-      completed_by: newStatus === 'completed' ? userId : null,
-      completed_at: newStatus === 'completed' ? nowIso : null
-    });
-
-    const logRef = doc(db, 'daily_logs', `${taskId}_${userId}_${today}`);
-    if (newStatus === 'completed') {
-      await setDoc(logRef, {
-        id: logRef.id,
-        task_id: taskId,
-        plan_id: taskData?.plan_id || '',
-        group_id: groupId,
-        user_id: userId,
-        completed_at: nowIso,
-        date: today
-      });
-    } else {
-      await deleteDoc(logRef);
+    try {
+      await setDoc(doc(db, 'user_subtask_statuses', statusObj.id), statusObj);
+      notify();
+      return statusObj;
+    } catch {
+      const idx = demoStatuses.findIndex(s => s.id === statusObj.id);
+      if (idx >= 0) demoStatuses[idx] = statusObj;
+      else demoStatuses.push(statusObj);
+      notify();
+      return statusObj;
     }
-
-    return newStatus === 'completed';
   },
 
-  // METRICS & DASHBOARD HELPERS
+  // ── Plan Progress ────────────────────────────────────────────────────────
+  async getPlanMembersProgress(planId: string, groupId: string): Promise<PlanMemberProgress[]> {
+    const members = await this.getGroupMembers(groupId);
+    const allTasks = demoTasks.filter(t => t.plan_id === planId);
+    const total = this.isDemo || !db ? allTasks.length : (await this.getTopicsWithTasks(planId)).reduce((sum, tw) => sum + tw.tasks.length, 0);
+
+    return Promise.all(members.map(async member => {
+      const statusMap = await this.getUserSubtaskStatuses(planId, member.id);
+      const completed = Object.values(statusMap).filter(s => s.status === 'completed').length;
+      return {
+        user: member,
+        completed,
+        total,
+        percentage: total > 0 ? Math.round((completed / total) * 100) : 0
+      };
+    }));
+  },
+
+  // ── Personal Notes ────────────────────────────────────────────────────────
+  async saveTaskNote(taskId: string, userId: string, note: string): Promise<void> {
+    const id = `${taskId}_${userId}`;
+    const obj = { id, task_id: taskId, user_id: userId, note, updated_at: new Date().toISOString() };
+    if (this.isDemo || !db) {
+      const idx = demoNotes.findIndex(n => n.id === id);
+      if (idx >= 0) demoNotes[idx] = obj;
+      else demoNotes.push(obj);
+      return;
+    }
+    try { await setDoc(doc(db, 'task_notes', id), obj); }
+    catch { const idx = demoNotes.findIndex(n => n.id === id); if (idx >= 0) demoNotes[idx] = obj; else demoNotes.push(obj); }
+  },
+
+  async getTaskNote(taskId: string, userId: string): Promise<string> {
+    const id = `${taskId}_${userId}`;
+    if (this.isDemo || !db) return demoNotes.find(n => n.id === id)?.note || '';
+    try {
+      const snap = await getDoc(doc(db, 'task_notes', id));
+      return snap.exists() ? (snap.data() as any).note : '';
+    } catch { return demoNotes.find(n => n.id === id)?.note || ''; }
+  },
+
+  // ── Group members daily progress (used by GroupView) ─────────────────────
   async getGroupMembersProgress(groupId: string): Promise<MemberProgress[]> {
     const members = await this.getGroupMembers(groupId);
-    const results: MemberProgress[] = [];
+    const plans = await this.getGroupPlans(groupId);
 
-    for (const member of members) {
-      const { userCompletedToday, userTotalToday, dailyPercentage } = await this.getDailyTasksForUser(groupId, member.id);
-      results.push({
-        user: member,
-        completedCount: userCompletedToday,
-        totalCount: userTotalToday,
-        percentage: dailyPercentage
-      });
-    }
-    return results;
+    return Promise.all(members.map(async member => {
+      let completed = 0;
+      let total = 0;
+      for (const plan of plans) {
+        const statusMap = await this.getUserSubtaskStatuses(plan.id, member.id);
+        const tasks = this.isDemo ? demoTasks.filter(t => t.plan_id === plan.id) : [];
+        total += tasks.length;
+        completed += Object.values(statusMap).filter(s => s.status === 'completed' && s.completed_at?.startsWith(todayStr)).length;
+      }
+      return { user: member, completedCount: completed, totalCount: total, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 };
+    }));
   },
-
-  async getOverallPlanProgress(planId: string): Promise<{ total: number; completed: number; percentage: number }> {
-    let tasks: PlanTask[] = [];
-    if (this.isDemo || !db) {
-      tasks = demoTasks.filter(t => t.plan_id === planId);
-    } else {
-      const q = query(collection(db, 'plan_tasks'), where('plan_id', '==', planId));
-      const snap = await getDocs(q);
-      tasks = snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as PlanTask));
-    }
-
-    const total = tasks.length;
-    const completed = tasks.filter(t => t.status === 'completed').length;
-    const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-    return { total, completed, percentage };
-  }
 };

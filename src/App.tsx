@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { User, Group, Plan, DailyPullTask, MemberProgress } from './types';
+import { User, Group, Plan, MemberProgress } from './types';
 import { studyService } from './services/studyService';
 import { auth, googleProvider } from './services/firebase';
 import {
@@ -25,7 +25,6 @@ export function App() {
       const saved = localStorage.getItem('syncstudy_user');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Also restore the service mode
         const mode = localStorage.getItem('syncstudy_mode');
         if (mode === 'demo') studyService.enableDemoMode();
         else studyService.enableFirebaseMode();
@@ -39,11 +38,6 @@ export function App() {
   const [userGroups, setUserGroups] = useState<Group[]>([]);
   const [activeGroup, setActiveGroup] = useState<Group | null>(null);
   const [activeTab, setActiveTab] = useState<'today' | 'group' | 'plans'>('today');
-
-  const [dailyTasks, setDailyTasks] = useState<DailyPullTask[]>([]);
-  const [completedCount, setCompletedCount] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
-  const [dailyPercentage, setDailyPercentage] = useState(0);
 
   const [memberProgressList, setMemberProgressList] = useState<MemberProgress[]>([]);
   const [groupPlans, setGroupPlans] = useState<Plan[]>([]);
@@ -77,34 +71,27 @@ export function App() {
   });
 
   // ─── Firebase Auth Listener (background session sync) ──────────────────────
-  // This ONLY handles: page refresh with existing Firebase session
-  // It does NOT handle: initial sign-in (that's done in handleGoogleSignIn)
   useEffect(() => {
     if (!auth) return;
 
     const unsubscribe = onAuthStateChanged(auth, (fbUser: any) => {
       console.log(`${LOG} onAuthStateChanged:`, fbUser ? `✅ ${fbUser.email}` : '❌ null');
 
-      // NEVER override during an active sign-in flow
       if (signInInProgress.current) {
         console.log(`${LOG} Sign-in in progress — ignoring auth state change`);
         return;
       }
 
-      // NEVER override if user is in demo mode
       if (studyService.isDemo) {
         console.log(`${LOG} Demo mode active — ignoring auth state change`);
         return;
       }
 
-      // NEVER set user to null if we already have a persisted session
-      // (this prevents the COOP-induced spurious null from kicking out a valid user)
       if (!fbUser && user) {
         console.log(`${LOG} Ignoring null — we have an active user: ${user.name}`);
         return;
       }
 
-      // Positive signal: Firebase has a valid session (e.g. page refresh)
       if (fbUser && !user) {
         console.log(`${LOG} Restoring Firebase session for: ${fbUser.email}`);
         const u = buildUser(fbUser);
@@ -130,11 +117,10 @@ export function App() {
     studyService.getUserGroups(user.id)
       .then(groups => {
         if (isCancelled) return;
-        console.log(`${LOG} Groups loaded: ${groups.length}`, groups.map(g => g.name));
         const validGroups = groups.length > 0 ? groups : [{
           id: 'group-1',
-          name: 'Study Group',
-          invite_code: 'SYNC01',
+          name: 'SDE Interview Prep Squad',
+          invite_code: 'SDE001',
           members: [user.id],
           createdBy: user.id,
           createdAt: new Date().toISOString()
@@ -147,8 +133,8 @@ export function App() {
         if (!isCancelled) {
           const fallback: Group = {
             id: 'group-1',
-            name: 'Study Group',
-            invite_code: 'SYNC01',
+            name: 'SDE Interview Prep Squad',
+            invite_code: 'SDE001',
             members: [user.id],
             createdBy: user.id,
             createdAt: new Date().toISOString()
@@ -161,19 +147,14 @@ export function App() {
     return () => { isCancelled = true; };
   }, [user]);
 
-  // ─── Load daily tasks & plans whenever activeGroup changes ────────────────
+  // ─── Load plans & member progress whenever activeGroup changes ────────────
   const refreshGroupData = useCallback(async () => {
     if (!user || !activeGroup) return;
     try {
-      const [pullResult, membersProgress, plans] = await Promise.all([
-        studyService.getDailyTasksForUser(activeGroup.id, user.id),
+      const [membersProgress, plans] = await Promise.all([
         studyService.getGroupMembersProgress(activeGroup.id),
         studyService.getGroupPlans(activeGroup.id),
       ]);
-      setDailyTasks(pullResult.tasks);
-      setCompletedCount(pullResult.userCompletedToday);
-      setTotalCount(pullResult.userTotalToday);
-      setDailyPercentage(pullResult.dailyPercentage);
       setMemberProgressList(membersProgress);
       setGroupPlans(plans);
     } catch (err) {
@@ -184,12 +165,16 @@ export function App() {
   useEffect(() => {
     if (!user || !activeGroup) return;
     refreshGroupData();
-    const unsub = studyService.subscribe(() => refreshGroupData());
-    return () => unsub();
+    const unsub = studyService.subscribe(() => {
+      refreshGroupData();
+    });
+    return () => {
+      unsub();
+    };
   }, [user, activeGroup, refreshGroupData]);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // AUTH ACTIONS — THE BULLETPROOF SIGN-IN FLOW
+  // AUTH ACTIONS
   // ═══════════════════════════════════════════════════════════════════════════
   const handleGoogleSignIn = async () => {
     if (!auth) {
@@ -199,7 +184,7 @@ export function App() {
     }
 
     console.log(`${LOG} ▶ Google Sign-In starting...`);
-    signInInProgress.current = true;  // Block onAuthStateChanged interference
+    signInInProgress.current = true;
     setIsLoadingAuth(true);
     setAuthError(null);
     studyService.enableFirebaseMode();
@@ -210,29 +195,17 @@ export function App() {
       console.log(`${LOG} ✅ Google Sign-In success: ${fbUser.email}`);
 
       const u = buildUser(fbUser);
-
-      // Save to Firestore (non-blocking)
       studyService.saveUser(u).catch(e => console.warn(`${LOG} saveUser:`, e));
-
-      // Persist and set state — this is the ONLY place that sets the user for Google sign-in
       persistUser(u, 'firebase');
-      console.log(`${LOG} ✅ User state set — dashboard should render now`);
-
     } catch (err: any) {
       const code = err?.code || '';
       console.error(`${LOG} ❌ Google Sign-In error [${code}]:`, err.message);
-
-      // Only show error for real failures, not user-cancelled actions
       if (code !== 'auth/popup-closed-by-user') {
         setAuthError(err.message || 'Sign-in failed. Try Demo Mode instead.');
       }
-      // Do NOT auto-fallback to demo — let user choose
     } finally {
       setIsLoadingAuth(false);
-      // Release the guard after a short delay to let React re-render
-      setTimeout(() => {
-        signInInProgress.current = false;
-      }, 2000);
+      setTimeout(() => { signInInProgress.current = false; }, 2000);
     }
   };
 
@@ -255,14 +228,13 @@ export function App() {
     persistUser(null, 'firebase');
     setActiveGroup(null);
     setUserGroups([]);
-    setDailyTasks([]);
     setGroupPlans([]);
     setMemberProgressList([]);
     studyService.enableFirebaseMode();
     setTimeout(() => { signInInProgress.current = false; }, 1000);
   };
 
-  // ─── Group & Task Actions ─────────────────────────────────────────────────
+  // ─── Group & Plan Actions ─────────────────────────────────────────────────
   const handleCreateGroup = async (name: string) => {
     if (!user) return;
     const newGroup = await studyService.createGroup(name, user.id);
@@ -277,26 +249,44 @@ export function App() {
     setActiveGroup(group);
   };
 
-  const handleToggleTask = async (taskId: string, currentStatus: 'pending' | 'completed') => {
-    if (!user || !activeGroup) return;
-    await studyService.toggleTaskCompletion(taskId, user.id, currentStatus, activeGroup.id);
-    await refreshGroupData();
-  };
-
   const handleCreatePlan = async (data: {
     title: string;
-    type: 'fixed' | 'rolling';
-    deadline?: string;
-    tasks: { title: string; scheduled_date?: string }[];
+    description?: string;
+    type: 'roadmap' | 'sprint';
+    start_date?: string;
+    end_date?: string;
+    topics: {
+      title: string;
+      description?: string;
+      estimated_days?: number;
+      tasks: {
+        title: string;
+        description?: string;
+        resources?: string;
+        priority?: 'low' | 'medium' | 'high';
+        estimated_hours?: number;
+      }[];
+    }[];
   }) => {
     if (!user || !activeGroup) return;
-    await studyService.createPlan(activeGroup.id, data.title, data.type, data.deadline, data.tasks, user.id);
+    await studyService.createPlanWithTopics(
+      activeGroup.id,
+      user.id,
+      {
+        title: data.title,
+        description: data.description,
+        type: data.type,
+        start_date: data.start_date,
+        end_date: data.end_date
+      },
+      data.topics
+    );
     await refreshGroupData();
+    setActiveTab('plans');
   };
 
   // ─── Rendering ────────────────────────────────────────────────────────────
 
-  // Not signed in → Landing / Login page
   if (!user) {
     return (
       <LoginPage
@@ -309,9 +299,12 @@ export function App() {
     );
   }
 
-  // Signed in → Full Dashboard
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#07080D] text-slate-100 flex flex-col font-sans relative selection:bg-violet-600 selection:text-white overflow-x-hidden">
+      {/* Dynamic ambient background glow meshes */}
+      <div className="fixed top-0 left-1/4 w-[600px] h-[450px] bg-violet-600/[0.08] rounded-full blur-[140px] pointer-events-none" />
+      <div className="fixed bottom-10 right-1/4 w-[500px] h-[400px] bg-cyan-500/[0.06] rounded-full blur-[140px] pointer-events-none" />
+      
       <Navbar
         currentUser={user}
         activeGroup={activeGroup}
@@ -328,12 +321,9 @@ export function App() {
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {activeTab === 'today' && (
           <TodayView
-            tasks={dailyTasks}
-            completedCount={completedCount}
-            totalCount={totalCount}
-            dailyPercentage={dailyPercentage}
-            onToggleTask={handleToggleTask}
-            groupName={activeGroup?.name || 'Study Group'}
+            groupName={activeGroup?.name || 'Study Squad'}
+            currentUserId={user.id}
+            activeGroupId={activeGroup?.id}
           />
         )}
         {activeTab === 'group' && activeGroup && (
@@ -347,6 +337,7 @@ export function App() {
           <Dashboard
             activeGroup={activeGroup}
             plans={groupPlans}
+            currentUserId={user.id}
             onOpenCreatePlan={() => setIsCreatePlanOpen(true)}
             onOpenJoinGroup={() => setIsJoinGroupOpen(true)}
             onSelectPlanTab={() => setActiveTab('plans')}
