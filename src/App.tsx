@@ -103,6 +103,13 @@ export function App() {
     return () => unsubscribe();
   }, [user, persistUser]);
 
+  // ─── Ensure user profile is always saved to Firestore ──────────────────────
+  useEffect(() => {
+    if (user && !studyService.isDemo) {
+      studyService.saveUser(user).catch(e => console.warn(`${LOG} saveUser sync error:`, e));
+    }
+  }, [user]);
+
   // ─── Load Groups whenever user changes ────────────────────────────────────
   useEffect(() => {
     if (!user) {
@@ -244,6 +251,9 @@ export function App() {
 
   const handleJoinGroup = async (code: string) => {
     if (!user) return;
+    if (!studyService.isDemo) {
+      await studyService.saveUser(user);
+    }
     const group = await studyService.joinGroup(code, user.id);
     setUserGroups(prev => prev.some(g => g.id === group.id) ? prev : [...prev, group]);
     setActiveGroup(group);
