@@ -258,18 +258,45 @@ export const studyService = {
     if (this.isDemo || !db) {
       const g = demoGroups.find(g => g.id === groupId);
       if (!g) return [];
-      return g.members.map(id => DEMO_USERS[id] || { id, name: 'Member', email: '', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80' });
+      return g.members.map(id => DEMO_USERS[id] || {
+        id,
+        name: `Teammate ${id.slice(-4)}`,
+        email: '',
+        avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${id}`
+      });
     }
     try {
       const snap = await getDoc(doc(db, 'groups', groupId));
       if (!snap.exists()) return [];
-      const members = (snap.data() as Group).members;
-      const users = await Promise.all(members.map(async id => {
-        const us = await getDoc(doc(db, 'users', id));
-        return us.exists() ? us.data() as User : null;
+      const memberIds: string[] = (snap.data() as Group).members || [];
+      const users = await Promise.all(memberIds.map(async id => {
+        try {
+          const us = await getDoc(doc(db, 'users', id));
+          if (us.exists()) {
+            const data = us.data() as User;
+            return {
+              id,
+              name: data.name || `Teammate ${id.slice(-4)}`,
+              email: data.email || '',
+              avatar: data.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${id}`
+            };
+          }
+        } catch (e) {
+          console.warn('Error fetching user profile for id:', id, e);
+        }
+        // Fallback user profile so no teammate is ever hidden
+        return {
+          id,
+          name: DEMO_USERS[id]?.name || `Teammate ${id.slice(-4)}`,
+          email: '',
+          avatar: DEMO_USERS[id]?.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${id}`
+        };
       }));
-      return users.filter(Boolean) as User[];
-    } catch { return []; }
+      return users;
+    } catch (err) {
+      console.warn('getGroupMembers error:', err);
+      return [];
+    }
   },
 
   // ── Plans ─────────────────────────────────────────────────────────────────
