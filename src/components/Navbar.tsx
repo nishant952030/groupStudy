@@ -40,7 +40,7 @@ export const Navbar: React.FC<Props> = ({
             <div className="relative">
               <button
                 onClick={() => { setSquadMenuOpen(p => !p); setUserMenuOpen(false); }}
-                className="flex items-center gap-1.5 text-xs text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 px-2.5 py-1.5 rounded-lg transition cursor-pointer max-w-[160px] sm:max-w-[220px]"
+                className="flex items-center gap-1.5 text-xs text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 px-2 sm:px-2.5 py-1.5 rounded-lg transition cursor-pointer max-w-[120px] sm:max-w-[220px]"
               >
                 <span className="truncate font-medium">{activeSquad?.name || 'Select Squad'}</span>
                 <ChevronDown className="w-3 h-3 shrink-0 text-zinc-500" />

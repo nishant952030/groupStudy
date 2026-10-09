@@ -416,9 +416,6 @@ export const TodayView: React.FC<Props> = ({ squad, currentUser, onNavigateToRoa
               <span className="font-medium uppercase tracking-wider text-[11px] text-zinc-500">
                 Squad Daily Activity
               </span>
-              <span className="text-[11px] text-zinc-500">
-                Click any member to inspect their daily plan
-              </span>
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
@@ -486,11 +483,6 @@ export const TodayView: React.FC<Props> = ({ squad, currentUser, onNavigateToRoa
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-zinc-400">
-                    {isViewingSelf
-                      ? 'Check off tasks as you finish them. Changes sync to your Roadmap progress.'
-                      : `Viewing live study targets for ${selectedMemberUser.name}. Only they can mark tasks complete.`}
-                  </p>
                 </div>
               </div>
 
@@ -552,124 +544,119 @@ export const TodayView: React.FC<Props> = ({ squad, currentUser, onNavigateToRoa
                   return (
                     <div
                       key={task.id}
-                      className={`group flex items-center justify-between gap-3 p-2.5 sm:p-3 rounded-xl border transition ${
+                      className={`group p-2.5 sm:p-3 rounded-xl border transition space-y-2 select-none ${
                         task.completed
                           ? 'bg-zinc-950/60 border-zinc-800/60 text-zinc-500'
                           : 'bg-zinc-900/60 border-zinc-800 text-zinc-200 hover:border-zinc-700 hover:bg-zinc-900/90'
                       }`}
                     >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <button
-                          type="button"
-                          disabled={!isOwner}
-                          onClick={() => handleToggleTask(task)}
-                          title={isOwner ? 'Toggle complete' : 'Only task owner can complete'}
-                          className={`w-4 h-4 rounded border transition flex items-center justify-center shrink-0 ${
-                            task.completed
-                              ? 'bg-zinc-200 border-zinc-200 text-zinc-950'
-                              : isOwner
-                                ? 'border-zinc-700 hover:border-zinc-500 cursor-pointer bg-transparent'
-                                : 'border-zinc-800 bg-zinc-950/80 cursor-not-allowed opacity-60'
-                          }`}
-                        >
-                          {task.completed && <Check className="w-3 h-3 stroke-[3]" />}
-                        </button>
+                      {/* Top Row: Checkbox + Title + Difficulty Tag */}
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            disabled={!isOwner}
+                            onClick={() => handleToggleTask(task)}
+                            title={isOwner ? 'Toggle complete' : 'Only task owner can complete'}
+                            className={`w-4 h-4 rounded border transition flex items-center justify-center shrink-0 ${
+                              task.completed
+                                ? 'bg-zinc-200 border-zinc-200 text-zinc-950'
+                                : isOwner
+                                  ? 'border-zinc-700 hover:border-zinc-500 cursor-pointer bg-transparent'
+                                  : 'border-zinc-800 bg-zinc-950/80 cursor-not-allowed opacity-60'
+                            }`}
+                          >
+                            {task.completed && <Check className="w-3 h-3 stroke-[3]" />}
+                          </button>
 
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span
-                              onClick={() => isOwner && handleToggleTask(task)}
-                              className={`text-xs font-medium transition truncate ${
-                                isOwner ? 'cursor-pointer' : ''
-                              } ${
-                                task.completed
-                                  ? 'line-through text-zinc-500'
-                                  : 'text-zinc-200 group-hover:text-white'
-                              }`}
-                            >
-                              {task.title}
-                            </span>
-
-                            {q?.difficulty === 'core' && (
-                              <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded shrink-0">
-                                Core
-                              </span>
-                            )}
-
-                            {task.topic_title && (
-                              <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800/80 text-zinc-400 font-mono shrink-0">
-                                {task.topic_title}
-                              </span>
-                            )}
-
-                            {task.question_id && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/50 text-zinc-500 font-mono shrink-0">
-                                Q#{task.question_id}
-                              </span>
-                            )}
-                          </div>
-
-                          {task.completed_at && (
-                            <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
-                              Completed {new Date(task.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </p>
-                          )}
+                          <span
+                            onClick={() => isOwner && handleToggleTask(task)}
+                            className={`text-xs font-semibold transition truncate ${
+                              isOwner ? 'cursor-pointer' : ''
+                            } ${
+                              task.completed
+                                ? 'line-through text-zinc-500'
+                                : 'text-zinc-200 group-hover:text-white'
+                            }`}
+                          >
+                            {task.title}
+                          </span>
                         </div>
+
+                        {q?.difficulty === 'core' && (
+                          <span className="text-[9px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded shrink-0">
+                            Core
+                          </span>
+                        )}
                       </div>
 
-                      {/* Right: Resource Links on hover (LeetCode, YouTube, Article) + Delete */}
-                      <div className="flex items-center gap-1 shrink-0 opacity-80 sm:opacity-0 group-hover:opacity-100 transition">
-                        {q?.leetcode_link && (
-                          <a
-                            href={q.leetcode_link}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition"
-                            title="LeetCode Problem"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <Code2 className="w-3.5 h-3.5" />
-                          </a>
-                        )}
+                      {/* Bottom Row: Metadata (Topic & Q#) on left, Resource Links & Delete on right */}
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-800/40 text-[10px] font-mono text-zinc-400">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {task.topic_title && (
+                            <span className="px-1.5 py-0.5 rounded bg-zinc-800/70 text-zinc-400 truncate max-w-[150px]">
+                              {task.topic_title}
+                            </span>
+                          )}
+                          {task.question_id && (
+                            <span className="text-zinc-500 shrink-0">
+                              Q#{task.question_id}
+                            </span>
+                          )}
+                        </div>
 
-                        {q?.yt_video && (
-                          <a
-                            href={q.yt_video}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition"
-                            title="YouTube Video Solution"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <Youtube className="w-3.5 h-3.5" />
-                          </a>
-                        )}
+                        {/* Right: Actions */}
+                        <div className="flex items-center gap-1.5 shrink-0 text-zinc-400">
+                          {q?.leetcode_link && (
+                            <a
+                              href={q.leetcode_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+                              title="LeetCode Problem"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <Code2 className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          {q?.yt_video && (
+                            <a
+                              href={q.yt_video}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1 rounded text-zinc-400 hover:text-red-400 hover:bg-zinc-800 transition"
+                              title="YouTube Video"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <Youtube className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          {(q?.article_link || q?.tuf_practice_link) && (
+                            <a
+                              href={q.article_link || q.tuf_practice_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1 rounded text-zinc-400 hover:text-cyan-400 hover:bg-zinc-800 transition"
+                              title="Article / Practice"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <BookOpen className="w-3.5 h-3.5" />
+                            </a>
+                          )}
 
-                        {(q?.article_link || q?.tuf_practice_link) && (
-                          <a
-                            href={q.article_link || q.tuf_practice_link}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1 rounded text-zinc-500 hover:text-cyan-400 hover:bg-zinc-800 transition"
-                            title="Article / Notes"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <BookOpen className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-
-                        {isOwner && (
-                          <button
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleDeleteTask(task.id);
-                            }}
-                            className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-950/20 rounded transition cursor-pointer ml-1"
-                            title="Delete task"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                          {isOwner && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleDeleteTask(task.id);
+                              }}
+                              className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-950/20 rounded transition cursor-pointer ml-1"
+                              title="Delete task"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -784,94 +771,98 @@ export const TodayView: React.FC<Props> = ({ squad, currentUser, onNavigateToRoa
                         return (
                           <div
                             key={item.id}
-                            className="group flex items-center justify-between gap-3 p-2.5 rounded-xl bg-zinc-950/50 border border-zinc-800/60 hover:border-zinc-700/60 hover:bg-zinc-950/80 transition select-none"
+                            className="group p-2.5 sm:p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/70 hover:border-zinc-700/80 transition space-y-2 select-none"
                           >
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-xs font-medium text-zinc-200 group-hover:text-white">
-                                    {item.title}
+                            {/* Top Row: Check Icon + Title + Difficulty Tag + Solver Chip */}
+                            <div className="flex items-center justify-between gap-2 min-w-0">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                                <span className="text-xs font-semibold text-zinc-100 truncate group-hover:text-white">
+                                  {item.title}
+                                </span>
+                                {q?.difficulty === 'core' && (
+                                  <span className="text-[9px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded shrink-0">
+                                    Core
                                   </span>
-                                  {q?.difficulty === 'core' && (
-                                    <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded shrink-0">
-                                      Core
-                                    </span>
-                                  )}
-                                  {item.topic && (
-                                    <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800/80 text-zinc-400 font-mono">
-                                      {item.topic}
-                                    </span>
-                                  )}
-                                  {item.question_id && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/40 text-zinc-500 font-mono">
-                                      Q#{item.question_id}
-                                    </span>
-                                  )}
-                                </div>
+                                )}
                               </div>
-                            </div>
 
-                            {/* Resource Links on hover */}
-                            <div className="flex items-center gap-1 shrink-0 opacity-80 sm:opacity-0 group-hover:opacity-100 transition">
-                              {q?.leetcode_link && (
-                                <a
-                                  href={q.leetcode_link}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition"
-                                  title="LeetCode Problem"
-                                  onClick={e => e.stopPropagation()}
-                                >
-                                  <Code2 className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                              {q?.yt_video && (
-                                <a
-                                  href={q.yt_video}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition"
-                                  title="YouTube Video Solution"
-                                  onClick={e => e.stopPropagation()}
-                                >
-                                  <Youtube className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                              {(q?.article_link || q?.tuf_practice_link) && (
-                                <a
-                                  href={q.article_link || q.tuf_practice_link}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="p-1 rounded text-zinc-500 hover:text-cyan-400 hover:bg-zinc-800 transition"
-                                  title="Article / Notes"
-                                  onClick={e => e.stopPropagation()}
-                                >
-                                  <BookOpen className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                            </div>
-
-                            {/* Solver Info + Time */}
-                            <div className="flex items-center gap-2 shrink-0">
-                              <div className="flex items-center gap-1.5">
+                              {/* Solver chip on right */}
+                              <div
+                                className="flex items-center gap-1.5 bg-zinc-900/90 border border-zinc-800/80 px-2 py-0.5 rounded-full shrink-0"
+                                title={`Solved by ${solver?.name || 'Member'}`}
+                              >
                                 <img
                                   src={solver?.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${item.user_id}`}
                                   alt={solver?.name || 'Member'}
-                                  className="w-4 h-4 rounded-full object-cover border border-zinc-700"
+                                  className="w-3.5 h-3.5 rounded-full object-cover"
                                 />
-                                <span className={`text-[11px] truncate max-w-[80px] sm:max-w-[120px] ${
-                                  isMe ? 'text-zinc-300 font-medium' : 'text-zinc-400'
-                                }`}>
-                                  {isMe ? 'You' : solver?.name || 'Member'}
+                                <span className="text-[10px] text-zinc-300 font-medium truncate max-w-[65px] sm:max-w-[110px]">
+                                  {isMe ? 'You' : solver?.name?.split(' ')[0] || 'Member'}
                                 </span>
                               </div>
+                            </div>
 
-                              {solvedTime && (
-                                <span className="text-[10px] font-mono text-zinc-500 hidden sm:inline">
-                                  {solvedTime}
-                                </span>
-                              )}
+                            {/* Bottom Row: Metadata (Topic & Q#) on left, Resource Links & Time on right */}
+                            <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-800/40 text-[10px] font-mono text-zinc-400">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {item.topic && (
+                                  <span className="px-1.5 py-0.5 rounded bg-zinc-800/70 text-zinc-400 truncate max-w-[150px]">
+                                    {item.topic}
+                                  </span>
+                                )}
+                                {item.question_id && (
+                                  <span className="text-zinc-500 shrink-0">
+                                    Q#{item.question_id}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Resource Links (LeetCode, YouTube, Article) */}
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {q?.leetcode_link && (
+                                  <a
+                                    href={q.leetcode_link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+                                    title="LeetCode Problem"
+                                    onClick={e => e.stopPropagation()}
+                                  >
+                                    <Code2 className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                                {q?.yt_video && (
+                                  <a
+                                    href={q.yt_video}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded text-zinc-400 hover:text-red-400 hover:bg-zinc-800 transition"
+                                    title="YouTube Video"
+                                    onClick={e => e.stopPropagation()}
+                                  >
+                                    <Youtube className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                                {(q?.article_link || q?.tuf_practice_link) && (
+                                  <a
+                                    href={q.article_link || q.tuf_practice_link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded text-zinc-400 hover:text-cyan-400 hover:bg-zinc-800 transition"
+                                    title="Article / Practice"
+                                    onClick={e => e.stopPropagation()}
+                                  >
+                                    <BookOpen className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+
+                                {solvedTime && (
+                                  <span className="text-[10px] text-zinc-500 ml-1 hidden sm:inline">
+                                    {solvedTime}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         );

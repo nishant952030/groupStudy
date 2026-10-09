@@ -123,22 +123,29 @@ export const studyService = {
   async joinSquad(inviteCode: string, userId: string): Promise<Squad> {
     if (!db) throw new Error('Firebase not configured');
     const code = inviteCode.trim().toUpperCase();
-    const snap = await withTimeout(
-      getDocs(query(collection(db, 'squads'), where('invite_code', '==', code)))
-    );
-    if (snap.empty) throw new Error(`No squad found with invite code "${code}"`);
+    try {
+      const snap = await withTimeout(
+        getDocs(query(collection(db, 'squads'), where('invite_code', '==', code)))
+      );
+      if (snap.empty) throw new Error(`No squad found with invite code "${code}"`);
 
-    const d = snap.docs[0];
-    const squad = { id: d.id, ...d.data() } as Squad;
+      const d = snap.docs[0];
+      const squad = { id: d.id, ...d.data() } as Squad;
 
-    if (!squad.members.includes(userId)) {
-      await updateDoc(doc(db, 'squads', squad.id), {
-        members: arrayUnion(userId)
-      });
-      squad.members = [...squad.members, userId];
+      if (!squad.members.includes(userId)) {
+        await updateDoc(doc(db, 'squads', squad.id), {
+          members: arrayUnion(userId)
+        });
+        squad.members = [...squad.members, userId];
+      }
+      notify();
+      return squad;
+    } catch (err: any) {
+      if (err?.code === 'permission-denied' || err?.message?.toLowerCase().includes('permission')) {
+        throw new Error('Firestore permission denied. Please publish the updated security rules in your Firebase Console.');
+      }
+      throw err;
     }
-    notify();
-    return squad;
   },
 
   async removeMember(squadId: string, memberIdToRemove: string, requestingUserId: string): Promise<void> {
