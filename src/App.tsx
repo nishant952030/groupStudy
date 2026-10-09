@@ -1,214 +1,102 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { User, Group, Plan, MemberProgress } from './types';
+import { User, Squad } from './types';
 import { studyService } from './services/studyService';
 import { auth, googleProvider } from './services/firebase';
-import {
-  signInWithPopup,
-  signOut as firebaseSignOut,
-  onAuthStateChanged
-} from 'firebase/auth';
+import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 
-import { Navbar } from './components/Navbar';
 import { LoginPage } from './components/LoginPage';
+import { Navbar } from './components/Navbar';
 import { TodayView } from './components/TodayView';
-import { GroupView } from './components/GroupView';
-import { Dashboard } from './components/Dashboard';
-import { PlanSetupWizard } from './components/PlanSetupWizard';
-import { JoinGroupModal } from './components/JoinGroupModal';
+import { RoadmapView } from './components/RoadmapView';
+import { SquadTab } from './components/SquadTab';
+import { CreateSquadModal } from './components/CreateSquadModal';
+import { JoinSquadModal } from './components/JoinSquadModal';
 
-const LOG = '[SyncStudy]';
+export type AppTab = 'today' | 'roadmap' | 'squad';
 
 export function App() {
-  // ─── Instant session restoration from localStorage ─────────────────────────
+  // ─── Auth state (restored from localStorage) ────────────────────────────
   const [user, setUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem('syncstudy_user');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const mode = localStorage.getItem('syncstudy_mode');
-        if (mode === 'demo') studyService.enableDemoMode();
-        else studyService.enableFirebaseMode();
-        console.log(`${LOG} Restored session: ${parsed.name} (${mode || 'firebase'} mode)`);
-        return parsed;
-      }
-    } catch {}
-    return null;
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
   });
 
-  const [userGroups, setUserGroups] = useState<Group[]>([]);
-  const [activeGroup, setActiveGroup] = useState<Group | null>(null);
-  const [activeTab, setActiveTab] = useState<'today' | 'group' | 'plans'>('today');
+  const [squads, setSquads] = useState<Squad[]>([]);
+  const [activeSquad, setActiveSquad] = useState<Squad | null>(null);
+  const [activeTab, setActiveTab] = useState<AppTab>('today');
 
-  const [memberProgressList, setMemberProgressList] = useState<MemberProgress[]>([]);
-  const [groupPlans, setGroupPlans] = useState<Plan[]>([]);
-
-  const [isCreatePlanOpen, setIsCreatePlanOpen] = useState(false);
-  const [isJoinGroupOpen, setIsJoinGroupOpen] = useState(false);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isJoinOpen, setIsJoinOpen] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Guard: when we explicitly sign in, block onAuthStateChanged(null) from overriding
   const signInInProgress = useRef(false);
 
-  // ─── Persist user to localStorage ──────────────────────────────────────────
-  const persistUser = useCallback((newUser: User | null, mode: 'firebase' | 'demo') => {
-    setUser(newUser);
-    if (newUser) {
-      localStorage.setItem('syncstudy_user', JSON.stringify(newUser));
-      localStorage.setItem('syncstudy_mode', mode);
-    } else {
-      localStorage.removeItem('syncstudy_user');
-      localStorage.removeItem('syncstudy_mode');
-    }
+  // ─── Persist user ────────────────────────────────────────────────────────
+  const persistUser = useCallback((u: User | null) => {
+    setUser(u);
+    if (u) localStorage.setItem('syncstudy_user', JSON.stringify(u));
+    else localStorage.removeItem('syncstudy_user');
   }, []);
 
   const buildUser = (fbUser: any): User => ({
     id: fbUser.uid,
     name: fbUser.displayName || 'Study Buddy',
     email: fbUser.email || '',
-    avatar: fbUser.photoURL ||
-      'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80'
+    avatar: fbUser.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${fbUser.uid}`
   });
 
-  // ─── Firebase Auth Listener (background session sync) ──────────────────────
+  // ─── Firebase auth listener ──────────────────────────────────────────────
   useEffect(() => {
     if (!auth) return;
-
-    const unsubscribe = onAuthStateChanged(auth, (fbUser: any) => {
-      console.log(`${LOG} onAuthStateChanged:`, fbUser ? `✅ ${fbUser.email}` : '❌ null');
-
-      if (signInInProgress.current) {
-        console.log(`${LOG} Sign-in in progress — ignoring auth state change`);
-        return;
-      }
-
-      if (studyService.isDemo) {
-        console.log(`${LOG} Demo mode active — ignoring auth state change`);
-        return;
-      }
-
-      if (!fbUser && user) {
-        console.log(`${LOG} Ignoring null — we have an active user: ${user.name}`);
-        return;
-      }
-
+    const unsub = onAuthStateChanged(auth, fbUser => {
+      if (signInInProgress.current) return;
       if (fbUser && !user) {
-        console.log(`${LOG} Restoring Firebase session for: ${fbUser.email}`);
-        const u = buildUser(fbUser);
-        studyService.enableFirebaseMode();
-        persistUser(u, 'firebase');
+        persistUser(buildUser(fbUser));
       }
     });
-
-    return () => unsubscribe();
+    return unsub;
   }, [user, persistUser]);
 
-  // ─── Ensure user profile is always saved to Firestore ──────────────────────
+  // ─── Save user profile to Firestore on login ─────────────────────────────
   useEffect(() => {
-    if (user && !studyService.isDemo) {
-      studyService.saveUser(user).catch(e => console.warn(`${LOG} saveUser sync error:`, e));
-    }
+    if (user) studyService.saveUser(user).catch(() => {});
   }, [user]);
 
-  // ─── Load Groups whenever user changes ────────────────────────────────────
-  useEffect(() => {
-    if (!user) {
-      setUserGroups([]);
-      setActiveGroup(null);
-      return;
-    }
-
-    console.log(`${LOG} Loading groups for: ${user.name} (${user.id})`);
-    let isCancelled = false;
-
-    studyService.getUserGroups(user.id)
-      .then(groups => {
-        if (isCancelled) return;
-        const validGroups = groups.length > 0 ? groups : [{
-          id: 'group-1',
-          name: 'SDE Interview Prep Squad',
-          invite_code: 'SDE001',
-          members: [user.id],
-          createdBy: user.id,
-          createdAt: new Date().toISOString()
-        }];
-        setUserGroups(validGroups);
-        setActiveGroup(prev => prev || validGroups[0]);
-      })
-      .catch(err => {
-        console.warn(`${LOG} Groups load error:`, err);
-        if (!isCancelled) {
-          const fallback: Group = {
-            id: 'group-1',
-            name: 'SDE Interview Prep Squad',
-            invite_code: 'SDE001',
-            members: [user.id],
-            createdBy: user.id,
-            createdAt: new Date().toISOString()
-          };
-          setUserGroups([fallback]);
-          setActiveGroup(fallback);
-        }
-      });
-
-    return () => { isCancelled = true; };
-  }, [user]);
-
-  // ─── Load plans & member progress whenever activeGroup changes ────────────
-  const refreshGroupData = useCallback(async () => {
-    if (!user || !activeGroup) return;
+  // ─── Load squads when user changes ──────────────────────────────────────
+  const loadSquads = useCallback(async () => {
+    if (!user) { setSquads([]); setActiveSquad(null); return; }
     try {
-      const [membersProgress, plans] = await Promise.all([
-        studyService.getGroupMembersProgress(activeGroup.id),
-        studyService.getGroupPlans(activeGroup.id),
-      ]);
-      setMemberProgressList(membersProgress);
-      setGroupPlans(plans);
-    } catch (err) {
-      console.warn(`${LOG} refreshGroupData error:`, err);
+      const userSquads = await studyService.getUserSquads(user.id);
+      setSquads(userSquads);
+      setActiveSquad(prev => {
+        if (!prev) return userSquads[0] || null;
+        return userSquads.find(s => s.id === prev.id) || userSquads[0] || null;
+      });
+    } catch (e) {
+      console.warn('[App] loadSquads failed:', e);
     }
-  }, [user, activeGroup]);
+  }, [user]);
 
-  useEffect(() => {
-    if (!user || !activeGroup) return;
-    refreshGroupData();
-    const unsub = studyService.subscribe(() => {
-      refreshGroupData();
-    });
-    return () => {
-      unsub();
-    };
-  }, [user, activeGroup, refreshGroupData]);
+  useEffect(() => { loadSquads(); }, [loadSquads]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // AUTH ACTIONS
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ─── Auth actions ────────────────────────────────────────────────────────
   const handleGoogleSignIn = async () => {
-    if (!auth) {
-      console.warn(`${LOG} No Firebase auth — falling back to demo`);
-      handleDemoSignIn();
-      return;
-    }
-
-    console.log(`${LOG} ▶ Google Sign-In starting...`);
+    if (!auth) { setAuthError('Firebase not configured'); return; }
     signInInProgress.current = true;
     setIsLoadingAuth(true);
     setAuthError(null);
-    studyService.enableFirebaseMode();
-
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const fbUser = result.user;
-      console.log(`${LOG} ✅ Google Sign-In success: ${fbUser.email}`);
-
-      const u = buildUser(fbUser);
-      studyService.saveUser(u).catch(e => console.warn(`${LOG} saveUser:`, e));
-      persistUser(u, 'firebase');
+      const u = buildUser(result.user);
+      await studyService.saveUser(u);
+      persistUser(u);
     } catch (err: any) {
       const code = err?.code || '';
-      console.error(`${LOG} ❌ Google Sign-In error [${code}]:`, err.message);
       if (code !== 'auth/popup-closed-by-user') {
-        setAuthError(err.message || 'Sign-in failed. Try Demo Mode instead.');
+        setAuthError(err.message || 'Sign-in failed');
       }
     } finally {
       setIsLoadingAuth(false);
@@ -216,92 +104,43 @@ export function App() {
     }
   };
 
-  const handleDemoSignIn = async () => {
-    console.log(`${LOG} ▶ Demo Sign-In`);
-    signInInProgress.current = true;
-    studyService.enableDemoMode();
-    const demoUser = await studyService.getCurrentUser('user-1');
-    persistUser(demoUser, 'demo');
-    console.log(`${LOG} ✅ Demo user set: ${demoUser.name}`);
-    setTimeout(() => { signInInProgress.current = false; }, 2000);
-  };
-
   const handleSignOut = async () => {
-    console.log(`${LOG} ▶ Sign-out`);
     signInInProgress.current = true;
-    if (!studyService.isDemo && auth) {
-      try { await firebaseSignOut(auth); } catch {}
-    }
-    persistUser(null, 'firebase');
-    setActiveGroup(null);
-    setUserGroups([]);
-    setGroupPlans([]);
-    setMemberProgressList([]);
-    studyService.enableFirebaseMode();
+    if (auth) { try { await firebaseSignOut(auth); } catch {} }
+    persistUser(null);
+    setSquads([]);
+    setActiveSquad(null);
     setTimeout(() => { signInInProgress.current = false; }, 1000);
   };
 
-  // ─── Group & Plan Actions ─────────────────────────────────────────────────
-  const handleCreateGroup = async (name: string) => {
+  // ─── Squad actions ───────────────────────────────────────────────────────
+  const handleCreateSquad = async (name: string) => {
     if (!user) return;
-    const newGroup = await studyService.createGroup(name, user.id);
-    setUserGroups(prev => [...prev, newGroup]);
-    setActiveGroup(newGroup);
+    const squad = await studyService.createSquad(name, user.id);
+    setSquads(prev => [...prev, squad]);
+    setActiveSquad(squad);
+    setIsCreateOpen(false);
+    setActiveTab('roadmap');
   };
 
-  const handleJoinGroup = async (code: string) => {
+  const handleJoinSquad = async (code: string) => {
     if (!user) return;
-    if (!studyService.isDemo) {
-      await studyService.saveUser(user);
-    }
-    const group = await studyService.joinGroup(code, user.id);
-    setUserGroups(prev => prev.some(g => g.id === group.id) ? prev : [...prev, group]);
-    setActiveGroup(group);
+    const squad = await studyService.joinSquad(code, user.id);
+    setSquads(prev => prev.some(s => s.id === squad.id) ? prev : [...prev, squad]);
+    setActiveSquad(squad);
+    setIsJoinOpen(false);
+    setActiveTab('roadmap');
   };
 
-  const handleCreatePlan = async (data: {
-    title: string;
-    description?: string;
-    type: 'roadmap' | 'sprint';
-    start_date?: string;
-    end_date?: string;
-    topics: {
-      title: string;
-      description?: string;
-      estimated_days?: number;
-      tasks: {
-        title: string;
-        description?: string;
-        resources?: string;
-        priority?: 'low' | 'medium' | 'high';
-        estimated_hours?: number;
-      }[];
-    }[];
-  }) => {
-    if (!user || !activeGroup) return;
-    await studyService.createPlanWithTopics(
-      activeGroup.id,
-      user.id,
-      {
-        title: data.title,
-        description: data.description,
-        type: data.type,
-        start_date: data.start_date,
-        end_date: data.end_date
-      },
-      data.topics
-    );
-    await refreshGroupData();
-    setActiveTab('plans');
+  const handleMemberRemoved = () => {
+    loadSquads();
   };
 
-  // ─── Rendering ────────────────────────────────────────────────────────────
-
+  // ─── Render ──────────────────────────────────────────────────────────────
   if (!user) {
     return (
       <LoginPage
         onGoogleSignIn={handleGoogleSignIn}
-        onDemoSignIn={handleDemoSignIn}
         isLoading={isLoadingAuth}
         authError={authError}
         onClearError={() => setAuthError(null)}
@@ -310,64 +149,83 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#07080D] text-slate-100 flex flex-col font-sans relative selection:bg-violet-600 selection:text-white overflow-x-hidden">
-      {/* Dynamic ambient background glow meshes */}
-      <div className="fixed top-0 left-1/4 w-[600px] h-[450px] bg-violet-600/[0.08] rounded-full blur-[140px] pointer-events-none" />
-      <div className="fixed bottom-10 right-1/4 w-[500px] h-[400px] bg-cyan-500/[0.06] rounded-full blur-[140px] pointer-events-none" />
-      
+    <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans selection:bg-zinc-700 selection:text-white">
       <Navbar
-        currentUser={user}
-        activeGroup={activeGroup}
-        userGroups={userGroups}
+        user={user}
+        squads={squads}
+        activeSquad={activeSquad}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onSelectGroup={setActiveGroup}
-        onOpenJoinGroup={() => setIsJoinGroupOpen(true)}
-        onOpenCreatePlan={() => setIsCreatePlanOpen(true)}
+        onSetTab={setActiveTab}
+        onSelectSquad={setActiveSquad}
+        onOpenCreate={() => setIsCreateOpen(true)}
+        onOpenJoin={() => setIsJoinOpen(true)}
         onSignOut={handleSignOut}
-        isDemo={studyService.isDemo}
       />
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8 pb-24 md:pb-8">
-        {activeTab === 'today' && (
-          <TodayView
-            groupName={activeGroup?.name || 'Study Squad'}
-            currentUserId={user.id}
-            activeGroupId={activeGroup?.id}
-          />
-        )}
-        {activeTab === 'group' && activeGroup && (
-          <GroupView
-            group={activeGroup}
-            memberProgressList={memberProgressList}
-            currentUserId={user.id}
-          />
-        )}
-        {activeTab === 'plans' && activeGroup && (
-          <Dashboard
-            activeGroup={activeGroup}
-            plans={groupPlans}
-            currentUserId={user.id}
-            onOpenCreatePlan={() => setIsCreatePlanOpen(true)}
-            onOpenJoinGroup={() => setIsJoinGroupOpen(true)}
-            onSelectPlanTab={() => setActiveTab('plans')}
-          />
+        {!activeSquad ? (
+          // No squad yet
+          <div className="flex flex-col items-center justify-center py-20 text-center gap-5">
+            <div className="w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-2xl font-bold text-zinc-200">
+              S
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-zinc-100">No squad yet</h2>
+              <p className="text-sm text-zinc-400 max-w-xs">
+                Create a squad or join one with an invite code to start studying together.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setIsCreateOpen(true)}
+                className="px-4 py-2 rounded-lg bg-zinc-100 hover:bg-white text-zinc-900 font-semibold text-sm transition cursor-pointer"
+              >
+                Create Squad
+              </button>
+              <button
+                onClick={() => setIsJoinOpen(true)}
+                className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 font-semibold text-sm transition cursor-pointer"
+              >
+                Join with Code
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'today' && (
+              <TodayView
+                squad={activeSquad}
+                currentUser={user}
+                onNavigateToRoadmap={() => setActiveTab('roadmap')}
+              />
+            )}
+            {activeTab === 'roadmap' && (
+              <RoadmapView
+                squad={activeSquad}
+                currentUserId={user.id}
+              />
+            )}
+            {activeTab === 'squad' && (
+              <SquadTab
+                squad={activeSquad}
+                currentUserId={user.id}
+                onMemberRemoved={handleMemberRemoved}
+                currentUser={user}
+              />
+            )}
+          </>
         )}
       </main>
 
-      <PlanSetupWizard
-        isOpen={isCreatePlanOpen}
-        onClose={() => setIsCreatePlanOpen(false)}
-        onSubmit={handleCreatePlan}
+      <CreateSquadModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        onCreateSquad={handleCreateSquad}
       />
-      <JoinGroupModal
-        isOpen={isJoinGroupOpen}
-        onClose={() => setIsJoinGroupOpen(false)}
-        onJoinGroup={handleJoinGroup}
-        onCreateGroup={handleCreateGroup}
-        userGroups={userGroups}
-        activeGroup={activeGroup}
-        onSelectGroup={setActiveGroup}
+      <JoinSquadModal
+        isOpen={isJoinOpen}
+        onClose={() => setIsJoinOpen(false)}
+        onJoinSquad={handleJoinSquad}
       />
     </div>
   );
