@@ -35,7 +35,19 @@ export const SquadTab: React.FC<Props> = ({ squad, currentUserId, currentUser, o
     }
   }, [squad.id, squad.members.join(',')]);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => {
+    loadStats();
+    const unsubNotify = studyService.subscribe(() => {
+      loadStats();
+    });
+    const unsubProgress = studyService.subscribeSquadProgress(squad.id, () => {
+      loadStats();
+    });
+    return () => {
+      unsubNotify();
+      unsubProgress();
+    };
+  }, [loadStats, squad.id]);
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(squad.invite_code);

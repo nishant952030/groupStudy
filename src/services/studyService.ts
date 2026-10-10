@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, setDoc, updateDoc,
-  query, where, arrayRemove, arrayUnion, deleteDoc
+  query, where, arrayRemove, arrayUnion, deleteDoc, onSnapshot
 } from 'firebase/firestore';
 import { db, isRealFirebaseConfigured } from './firebase';
 import { User, Squad, QuestionProgress, MemberStats, DailyTask, SolvedHistoryItem, DailySolvedHistory } from '../types';
@@ -103,6 +103,40 @@ export const studyService = {
     }
   },
 
+  subscribeUserSquads(userId: string, onUpdate: (squads: Squad[]) => void): () => void {
+    if (!db) return () => {};
+    try {
+      const q = query(collection(db, 'squads'), where('members', 'array-contains', userId));
+      return onSnapshot(q, (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Squad));
+        onUpdate(list);
+      }, (err) => {
+        console.warn('[studyService] subscribeUserSquads error:', err);
+      });
+    } catch (err) {
+      console.warn('[studyService] subscribeUserSquads failed:', err);
+      return () => {};
+    }
+  },
+
+  subscribeSquad(squadId: string, onUpdate: (squad: Squad | null) => void): () => void {
+    if (!db) return () => {};
+    try {
+      return onSnapshot(doc(db, 'squads', squadId), (snap) => {
+        if (snap.exists()) {
+          onUpdate({ id: snap.id, ...snap.data() } as Squad);
+        } else {
+          onUpdate(null);
+        }
+      }, (err) => {
+        console.warn('[studyService] subscribeSquad error:', err);
+      });
+    } catch (err) {
+      console.warn('[studyService] subscribeSquad failed:', err);
+      return () => {};
+    }
+  },
+
   async createSquad(name: string, userId: string): Promise<Squad> {
     if (!db) throw new Error('Firebase not configured');
     const ref = doc(collection(db, 'squads'));
@@ -169,16 +203,34 @@ export const studyService = {
   async getUserProgress(squadId: string, userId: string): Promise<Set<number>> {
     if (!db) return new Set();
     try {
-      const snap = await withTimeout(
-        getDocs(query(
-          collection(db, 'progress'),
-          where('squad_id', '==', squadId),
-          where('user_id', '==', userId),
-          where('solved', '==', true)
-        ))
-      );
-      const ids = snap.docs.map(d => (d.data() as QuestionProgress).question_id);
-      return new Set(ids);
+      const [progSnap, tasksSnap] = await Promise.all([
+        withTimeout(
+          getDocs(query(
+            collection(db, 'progress'),
+            where('squad_id', '==', squadId),
+            where('user_id', '==', userId),
+            where('solved', '==', true)
+          ))
+        ),
+        withTimeout(
+          getDocs(query(
+            collection(db, 'daily_tasks'),
+            where('squad_id', '==', squadId),
+            where('user_id', '==', userId),
+            where('completed', '==', true)
+          ))
+        ).catch(() => ({ docs: [] } as any))
+      ]);
+      const ids = new Set<number>();
+      progSnap.docs.forEach(d => {
+        const p = d.data() as QuestionProgress;
+        if (p.question_id) ids.add(p.question_id);
+      });
+      tasksSnap.docs.forEach((d: any) => {
+        const t = d.data() as DailyTask;
+        if (t.question_id) ids.add(t.question_id);
+      });
+      return ids;
     } catch (e) {
       console.warn('[studyService] getUserProgress failed:', e);
       return new Set();
@@ -192,23 +244,158 @@ export const studyService = {
   async getSquadProgress(squadId: string): Promise<Record<number, Set<string>>> {
     if (!db) return {};
     try {
-      const snap = await withTimeout(
-        getDocs(query(
-          collection(db, 'progress'),
-          where('squad_id', '==', squadId),
-          where('solved', '==', true)
-        ))
-      );
+      const [progSnap, tasksSnap] = await Promise.all([
+        withTimeout(
+          getDocs(query(
+            collection(db, 'progress'),
+            where('squad_id', '==', squadId),
+            where('solved', '==', true)
+          ))
+        ),
+        withTimeout(
+          getDocs(query(
+            collection(db, 'daily_tasks'),
+            where('squad_id', '==', squadId),
+            where('completed', '==', true)
+          ))
+        ).catch(() => ({ docs: [] } as any))
+      ]);
       const result: Record<number, Set<string>> = {};
-      snap.docs.forEach(d => {
+      progSnap.docs.forEach(d => {
         const p = d.data() as QuestionProgress;
         if (!result[p.question_id]) result[p.question_id] = new Set();
         result[p.question_id].add(p.user_id);
+      });
+      tasksSnap.docs.forEach((d: any) => {
+        const t = d.data() as DailyTask;
+        if (t.question_id) {
+          if (!result[t.question_id]) result[t.question_id] = new Set();
+          result[t.question_id].add(t.user_id);
+        }
       });
       return result;
     } catch (e) {
       console.warn('[studyService] getSquadProgress failed:', e);
       return {};
+    }
+  },
+
+  subscribeUserProgress(squadId: string, userId: string, onUpdate: (solved: Set<number>) => void): () => void {
+    if (!db) return () => {};
+    let progIds = new Set<number>();
+    let taskIds = new Set<number>();
+
+    const emit = () => {
+      const merged = new Set<number>([...progIds, ...taskIds]);
+      onUpdate(merged);
+    };
+
+    try {
+      const qProg = query(
+        collection(db, 'progress'),
+        where('squad_id', '==', squadId),
+        where('user_id', '==', userId),
+        where('solved', '==', true)
+      );
+      const qTasks = query(
+        collection(db, 'daily_tasks'),
+        where('squad_id', '==', squadId),
+        where('user_id', '==', userId),
+        where('completed', '==', true)
+      );
+
+      const unsubProg = onSnapshot(qProg, (snap) => {
+        progIds = new Set<number>(
+          snap.docs
+            .map(d => (d.data() as QuestionProgress).question_id)
+            .filter(Boolean)
+        );
+        emit();
+      }, (err) => console.warn('[studyService] subscribeUserProgress(prog) error:', err));
+
+      const unsubTasks = onSnapshot(qTasks, (snap) => {
+        taskIds = new Set<number>(
+          snap.docs
+            .map(d => (d.data() as DailyTask).question_id)
+            .filter(Boolean) as number[]
+        );
+        emit();
+      }, (err) => console.warn('[studyService] subscribeUserProgress(tasks) error:', err));
+
+      return () => {
+        unsubProg();
+        unsubTasks();
+      };
+    } catch (err) {
+      console.warn('[studyService] subscribeUserProgress failed:', err);
+      return () => {};
+    }
+  },
+
+  subscribeSquadProgress(squadId: string, onUpdate: (prog: Record<number, Set<string>>) => void): () => void {
+    if (!db) return () => {};
+    let progMap: Record<number, Set<string>> = {};
+    let taskMap: Record<number, Set<string>> = {};
+
+    const emit = () => {
+      const merged: Record<number, Set<string>> = {};
+      Object.entries(progMap).forEach(([qidStr, uids]) => {
+        const qid = Number(qidStr);
+        merged[qid] = new Set(uids);
+      });
+      Object.entries(taskMap).forEach(([qidStr, uids]) => {
+        const qid = Number(qidStr);
+        if (!merged[qid]) merged[qid] = new Set();
+        uids.forEach(uid => merged[qid].add(uid));
+      });
+      onUpdate(merged);
+    };
+
+    try {
+      const qProg = query(
+        collection(db, 'progress'),
+        where('squad_id', '==', squadId),
+        where('solved', '==', true)
+      );
+      const qTasks = query(
+        collection(db, 'daily_tasks'),
+        where('squad_id', '==', squadId),
+        where('completed', '==', true)
+      );
+
+      const unsubProg = onSnapshot(qProg, (snap) => {
+        const next: Record<number, Set<string>> = {};
+        snap.docs.forEach(d => {
+          const p = d.data() as QuestionProgress;
+          if (p.question_id) {
+            if (!next[p.question_id]) next[p.question_id] = new Set();
+            next[p.question_id].add(p.user_id);
+          }
+        });
+        progMap = next;
+        emit();
+      }, (err) => console.warn('[studyService] subscribeSquadProgress(prog) error:', err));
+
+      const unsubTasks = onSnapshot(qTasks, (snap) => {
+        const next: Record<number, Set<string>> = {};
+        snap.docs.forEach(d => {
+          const t = d.data() as DailyTask;
+          if (t.question_id) {
+            if (!next[t.question_id]) next[t.question_id] = new Set();
+            next[t.question_id].add(t.user_id);
+          }
+        });
+        taskMap = next;
+        emit();
+      }, (err) => console.warn('[studyService] subscribeSquadProgress(tasks) error:', err));
+
+      return () => {
+        unsubProg();
+        unsubTasks();
+      };
+    } catch (err) {
+      console.warn('[studyService] subscribeSquadProgress failed:', err);
+      return () => {};
     }
   },
 
@@ -300,6 +487,27 @@ export const studyService = {
     } catch (e) {
       console.warn('[studyService] getDailyTasks failed:', e);
       return [];
+    }
+  },
+
+  subscribeDailyTasks(squadId: string, date: string, onUpdate: (tasks: DailyTask[]) => void): () => void {
+    if (!db) return () => {};
+    try {
+      const q = query(
+        collection(db, 'daily_tasks'),
+        where('squad_id', '==', squadId),
+        where('date', '==', date)
+      );
+      return onSnapshot(q, (snap) => {
+        const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() } as DailyTask));
+        tasks.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+        onUpdate(tasks);
+      }, (err) => {
+        console.warn('[studyService] subscribeDailyTasks error:', err);
+      });
+    } catch (err) {
+      console.warn('[studyService] subscribeDailyTasks failed:', err);
+      return () => {};
     }
   },
 
@@ -471,6 +679,113 @@ export const studyService = {
     } catch (e) {
       console.warn('[studyService] getSquadSolvedHistory failed:', e);
       return [];
+    }
+  },
+
+  subscribeSquadSolvedHistory(squadId: string, onUpdate: (history: DailySolvedHistory[]) => void): () => void {
+    if (!db) return () => {};
+    let progItems: QuestionProgress[] = [];
+    let taskItems: DailyTask[] = [];
+
+    const questionMap = new Map<number, { label: string; topicLabel: string }>();
+    STRIVER_180_TOPICS.forEach(topic => {
+      topic.subtopics.forEach(sub => {
+        sub.questions.forEach(q => {
+          questionMap.set(q.id, { label: q.label, topicLabel: topic.label });
+        });
+      });
+    });
+
+    const emit = () => {
+      const historyByDate: Record<string, SolvedHistoryItem[]> = {};
+      const seenKeys = new Set<string>();
+
+      progItems.forEach(p => {
+        const qMeta = questionMap.get(p.question_id);
+        const solvedAt = p.solved_at || new Date().toISOString();
+        const date = solvedAt.split('T')[0];
+        const dedupeKey = `${p.user_id}_q_${p.question_id}_${date}`;
+
+        if (!seenKeys.has(dedupeKey)) {
+          seenKeys.add(dedupeKey);
+          if (!historyByDate[date]) historyByDate[date] = [];
+          historyByDate[date].push({
+            id: p.id,
+            user_id: p.user_id,
+            title: qMeta?.label || `Question #${p.question_id}`,
+            question_id: p.question_id,
+            topic: qMeta?.topicLabel || 'DSA Problem',
+            solved_at: solvedAt,
+            date
+          });
+        }
+      });
+
+      taskItems.forEach(t => {
+        const date = t.date || (t.completed_at ? t.completed_at.split('T')[0] : new Date().toISOString().split('T')[0]);
+        const dedupeKey = t.question_id ? `${t.user_id}_q_${t.question_id}_${date}` : `${t.id}`;
+
+        if (!seenKeys.has(dedupeKey)) {
+          seenKeys.add(dedupeKey);
+          if (!historyByDate[date]) historyByDate[date] = [];
+          historyByDate[date].push({
+            id: t.id,
+            user_id: t.user_id,
+            title: t.title,
+            question_id: t.question_id,
+            topic: t.topic_title || 'Daily Goal',
+            solved_at: t.completed_at || t.created_at || new Date().toISOString(),
+            date
+          });
+        }
+      });
+
+      const sortedDates = Object.keys(historyByDate).sort((a, b) => b.localeCompare(a));
+      const result: DailySolvedHistory[] = sortedDates.map(date => {
+        const items = historyByDate[date].sort((a, b) => b.solved_at.localeCompare(a.solved_at));
+        const byUser: Record<string, number> = {};
+        items.forEach(it => {
+          byUser[it.user_id] = (byUser[it.user_id] || 0) + 1;
+        });
+        return {
+          date,
+          totalSolved: items.length,
+          byUser,
+          items
+        };
+      });
+      onUpdate(result);
+    };
+
+    try {
+      const qProg = query(
+        collection(db, 'progress'),
+        where('squad_id', '==', squadId),
+        where('solved', '==', true)
+      );
+      const qTasks = query(
+        collection(db, 'daily_tasks'),
+        where('squad_id', '==', squadId),
+        where('completed', '==', true)
+      );
+
+      const unsubProg = onSnapshot(qProg, (snap) => {
+        progItems = snap.docs.map(d => d.data() as QuestionProgress);
+        emit();
+      }, (err) => console.warn('[studyService] subscribeHistory(prog) error:', err));
+
+      const unsubTasks = onSnapshot(qTasks, (snap) => {
+        taskItems = snap.docs.map(d => d.data() as DailyTask);
+        emit();
+      }, (err) => console.warn('[studyService] subscribeHistory(tasks) error:', err));
+
+      return () => {
+        unsubProg();
+        unsubTasks();
+      };
+    } catch (err) {
+      console.warn('[studyService] subscribeSquadSolvedHistory failed:', err);
+      return () => {};
     }
   }
 };

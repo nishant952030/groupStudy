@@ -4,6 +4,7 @@ import { studyService } from './services/studyService';
 import { auth, googleProvider } from './services/firebase';
 import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 
+import { Loader2 } from 'lucide-react';
 import { LoginPage } from './components/LoginPage';
 import { Navbar } from './components/Navbar';
 import { TodayView } from './components/TodayView';
@@ -26,6 +27,7 @@ export function App() {
   const [squads, setSquads] = useState<Squad[]>([]);
   const [activeSquad, setActiveSquad] = useState<Squad | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('today');
+  const [isLoadingSquads, setIsLoadingSquads] = useState(true);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isJoinOpen, setIsJoinOpen] = useState(false);
@@ -65,22 +67,37 @@ export function App() {
     if (user) studyService.saveUser(user).catch(() => {});
   }, [user]);
 
-  // ─── Load squads when user changes ──────────────────────────────────────
-  const loadSquads = useCallback(async () => {
-    if (!user) { setSquads([]); setActiveSquad(null); return; }
-    try {
-      const userSquads = await studyService.getUserSquads(user.id);
+  // ─── Real-time squads subscription ──────────────────────────────────────
+  useEffect(() => {
+    if (!user) {
+      setSquads([]);
+      setActiveSquad(null);
+      setIsLoadingSquads(false);
+      return;
+    }
+    setIsLoadingSquads(true);
+    const unsub = studyService.subscribeUserSquads(user.id, (userSquads) => {
       setSquads(userSquads);
       setActiveSquad(prev => {
         if (!prev) return userSquads[0] || null;
         return userSquads.find(s => s.id === prev.id) || userSquads[0] || null;
       });
-    } catch (e) {
-      console.warn('[App] loadSquads failed:', e);
-    }
+      setIsLoadingSquads(false);
+    });
+    return unsub;
   }, [user]);
 
-  useEffect(() => { loadSquads(); }, [loadSquads]);
+  // Keep activeSquad in real-time sync (e.g. when members join or are removed)
+  useEffect(() => {
+    if (!activeSquad?.id) return;
+    const unsub = studyService.subscribeSquad(activeSquad.id, (updated) => {
+      if (updated) {
+        setActiveSquad(updated);
+        setSquads(prev => prev.map(s => s.id === updated.id ? updated : s));
+      }
+    });
+    return unsub;
+  }, [activeSquad?.id]);
 
   // ─── Auth actions ────────────────────────────────────────────────────────
   const handleGoogleSignIn = async () => {
@@ -110,6 +127,7 @@ export function App() {
     persistUser(null);
     setSquads([]);
     setActiveSquad(null);
+    setIsLoadingSquads(false);
     setTimeout(() => { signInInProgress.current = false; }, 1000);
   };
 
@@ -133,7 +151,7 @@ export function App() {
   };
 
   const handleMemberRemoved = () => {
-    loadSquads();
+    // Automatically handled by real-time listener
   };
 
   // ─── Render ──────────────────────────────────────────────────────────────
@@ -155,6 +173,7 @@ export function App() {
         squads={squads}
         activeSquad={activeSquad}
         activeTab={activeTab}
+        isLoadingSquads={isLoadingSquads}
         onSetTab={setActiveTab}
         onSelectSquad={setActiveSquad}
         onOpenCreate={() => setIsCreateOpen(true)}
@@ -163,7 +182,18 @@ export function App() {
       />
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8 pb-24 md:pb-8">
-        {!activeSquad ? (
+        {isLoadingSquads && !activeSquad ? (
+          // Loading spinner while squads are being fetched from Firestore
+          <div className="flex flex-col items-center justify-center py-28 text-center gap-4 animate-in fade-in duration-300">
+            <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center shadow-lg">
+              <Loader2 className="w-6 h-6 text-zinc-300 animate-spin" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-zinc-200">Loading your squad...</p>
+              <p className="text-xs text-zinc-500">Syncing with cloud study room</p>
+            </div>
+          </div>
+        ) : !activeSquad ? (
           // No squad yet
           <div className="flex flex-col items-center justify-center py-20 text-center gap-5">
             <div className="w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-2xl font-bold text-zinc-200">

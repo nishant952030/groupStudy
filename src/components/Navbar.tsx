@@ -8,6 +8,7 @@ interface Props {
   squads: Squad[];
   activeSquad: Squad | null;
   activeTab: AppTab;
+  isLoadingSquads?: boolean;
   onSetTab: (tab: AppTab) => void;
   onSelectSquad: (squad: Squad) => void;
   onOpenCreate: () => void;
@@ -16,7 +17,7 @@ interface Props {
 }
 
 export const Navbar: React.FC<Props> = ({
-  user, squads, activeSquad, activeTab,
+  user, squads, activeSquad, activeTab, isLoadingSquads = false,
   onSetTab, onSelectSquad, onOpenCreate, onOpenJoin, onSignOut
 }) => {
   const [squadMenuOpen, setSquadMenuOpen] = useState(false);
@@ -36,7 +37,9 @@ export const Navbar: React.FC<Props> = ({
           </div>
 
           {/* Squad Switcher Dropdown */}
-          {squads.length > 0 && (
+          {isLoadingSquads ? (
+            <div className="h-7 w-24 sm:w-28 rounded-lg bg-zinc-800/60 animate-pulse border border-zinc-700/40 shrink-0" />
+          ) : squads.length > 0 ? (
             <div className="relative">
               <button
                 onClick={() => { setSquadMenuOpen(p => !p); setUserMenuOpen(false); }}
@@ -81,7 +84,7 @@ export const Navbar: React.FC<Props> = ({
                 </>
               )}
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* Center: Tab Navigation */}
@@ -144,7 +147,7 @@ export const Navbar: React.FC<Props> = ({
                   <p className="text-xs font-medium text-zinc-200 truncate">{user.name}</p>
                   <p className="text-[11px] text-zinc-500 truncate">{user.email}</p>
                 </div>
-                {squads.length === 0 && (
+                {!isLoadingSquads && squads.length === 0 && (
                   <>
                     <button
                       onClick={() => { onOpenCreate(); setUserMenuOpen(false); }}

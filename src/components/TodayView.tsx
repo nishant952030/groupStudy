@@ -83,17 +83,35 @@ export const TodayView: React.FC<Props> = ({ squad, currentUser, onNavigateToRoa
   }, [squad.id, squad.members.join(','), currentUser.id, selectedDate]);
 
   useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      loadData(false);
-    } else {
-      loadData(true);
-    }
-    const unsub = studyService.subscribe(() => {
-      loadData(true); // Completely silent background sync, no flicker!
+    // Initial fetch of members & data
+    studyService.getUsers(squad.members).then(setMembers).catch(() => {});
+    loadData(false);
+
+    // ── Real-time Firestore subscriptions ──
+    const unsubTasks = studyService.subscribeDailyTasks(squad.id, selectedDate, (liveTasks) => {
+      setTasks(liveTasks);
+      setLoading(false);
     });
-    return unsub;
-  }, [loadData]);
+
+    const unsubProgress = studyService.subscribeUserProgress(squad.id, currentUser.id, (liveSolved) => {
+      setMySolved(liveSolved);
+    });
+
+    const unsubHistory = studyService.subscribeSquadSolvedHistory(squad.id, (liveHistory) => {
+      setHistory(liveHistory);
+    });
+
+    const unsubNotify = studyService.subscribe(() => {
+      loadData(true);
+    });
+
+    return () => {
+      unsubTasks();
+      unsubProgress();
+      unsubHistory();
+      unsubNotify();
+    };
+  }, [squad.id, squad.members.join(','), currentUser.id, selectedDate, loadData]);
 
   // Format date heading
   const formattedDate = useMemo(() => {
